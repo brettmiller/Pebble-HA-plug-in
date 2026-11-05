@@ -4,6 +4,11 @@ const root=path.resolve(__dirname,'..');
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).pebble;
 assert.strictEqual(pkg.projectType,'plugin');
 assert.strictEqual(pkg.manifestVersion,2);
+assert(pkg.plugin.sources.length>0);
+assert(pkg.plugin.sources.every(source=>source.category==='agent'),
+  'All sources must use the Pebble Store-supported agent category');
+assert(pkg.plugin.sources.some(source=>source.items.includes('entity')));
+assert(pkg.plugin.sources.some(source=>source.items.includes('configured')));
 assert(pkg.plugin.actions.find(a=>a.name==='call_service').callerPermissions.includes('HomeControl'));
 assert(pkg.plugin.actions.find(a=>a.name==='conversation').callerPermissions.includes('HomeConverse'));
 assert(pkg.plugin.sources.find(s=>s.items.includes('entity')).callerPermissions.includes('HomeRead'));
