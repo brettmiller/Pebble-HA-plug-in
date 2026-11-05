@@ -32,6 +32,9 @@ Actions:
 | `get_config` | `{}` | HomeRead | Read shared STT/TTS/agent/pipeline defaults (no credentials) |
 | `read_api` | `{path}` | HomeRead | Allowlisted read-only HA API GET |
 | `conversation` | `{text, agent_id?, conversation_id?}` | HomeConverse | Call HA conversation/process |
+| `tts_prepare` | `{text, engine_id?}` | HomeConverse | Synthesize 8kHz mono WAV with plugin-held credentials; returns a temporary session ID, byte length and chunk size |
+| `tts_chunk` | `{session_id, offset}` | HomeConverse | Return a base64 WAV chunk (6000 raw bytes) |
+| `tts_release` | `{session_id}` | HomeConverse | Free temporary speech data |
 | `render_template` | `{template}` | HomeControl | Render a trusted HA Jinja template |
 | `call_service` | `{domain,service,data?,target?}` | HomeControl | Invoke an arbitrary HA service |
 | `fire_event` | `{event_type,event_data?}` | HomeControl | Fire an HA event |
@@ -70,13 +73,13 @@ const result = await Pebble.invokeAction({
 const preferences = JSON.parse(result.text);
 ```
 
-The plugin still does not expose continuous microphone streaming or binary TTS audio. The consuming watchapp must implement that separately.
+The plugin now exposes synthesized WAV audio through request-scoped, base64-encoded chunks. Audio is fetched and held temporarily inside the plugin; the consuming app handles WAV decoding and watch playback without Home Assistant credentials. Sessions expire after inactivity and should be explicitly released. This has higher request overhead than a streaming API. Continuous microphone / Assist WebSocket streaming is not exposed by the current plugin API.
 
 ## Watchapp compatibility
 
-Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle. The plugin-backed path uses `conversation` for one-shot dictation, without copying the token into watchapp storage, and currently displays the response as text.
+Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle. The plugin-backed path uses `conversation` for one-shot dictation, without copying the token into watchapp storage, and uses `tts_prepare` / `tts_chunk` for spoken responses when enabled.
 
-**Limitation:** Native watch microphone streaming, Assist STT and audio TTS still use the existing direct Home Assistant connection. Pebble plugin actions are request-scoped and do not currently replace a long-running WebSocket and binary audio transport. Keep the direct setup for hands-free voice. Do not enable the plugin toggle expecting it to migrate that voice connection automatically.
+**Limitation:** Continuous watch microphone streaming is not yet supported in plugin mode. It requires a long-running binary Assist WebSocket; current plugin actions are request-scoped and expose no streaming bridge. The watchapp blocks this feature while plugin mode is selected rather than silently using direct credentials. One-shot watch dictation and text-to-speech responses use only the plugin. Plugin-owned audio sessions rely on the plugin preview runtime retaining an active handler instance across chunk requests and require testing on a physical phone/watch.
 
 ## Build
 
