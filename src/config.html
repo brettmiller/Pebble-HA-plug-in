@@ -5,7 +5,7 @@
 :root{color-scheme:light dark}body{font:16px system-ui,sans-serif;margin:20px;max-width:600px}
 label{display:block;margin:18px 0 6px}input{box-sizing:border-box;width:100%;padding:11px;border-radius:7px;border:1px solid #888;background:transparent;color:inherit}
 button{padding:12px 18px;margin:15px 9px 0 0;border:0;border-radius:8px;background:#1685b8;color:white}
-button.alt{background:#555}.note{font-size:13px;opacity:.8}#status{white-space:pre-wrap;padding:14px;background:rgba(128,128,128,.15);margin-top:16px;border-radius:8px}
+button.alt{background:#555}select{width:100%;padding:11px;border:1px solid #888;border-radius:7px;background:transparent;color:inherit}fieldset{margin-top:25px;border:1px solid #888;border-radius:10px;padding:14px}legend{font-weight:bold}.note{font-size:13px;opacity:.8}#status{white-space:pre-wrap;padding:14px;background:rgba(128,128,128,.15);margin-top:16px;border-radius:8px}
 </style></head><body>
 <h2>Home Assistant Bridge</h2>
 <p>Configure your Home Assistant server once. Other Pebble apps can request permission to read its entities, send conversation messages, or control services.</p>
@@ -16,16 +16,55 @@ button.alt{background:#555}.note{font-size:13px;opacity:.8}#status{white-space:p
 <p class="note">Your token is stored privately in the Pebble phone app's secure storage. This page never reads it back.</p>
 <button id="save">Save connection</button><button id="test" class="alt">Test connection</button><button id="forget" class="alt">Forget connection</button>
 <div id="status">Loading plugin…</div>
+<fieldset><legend>Voice &amp; AI defaults</legend>
+<p class="note">These preferences can be shared with other Pebble apps. Speech engines used by a running Assist pipeline are configured in Home Assistant; selecting an engine here does not modify that pipeline.</p>
+<label for="pipeline">Assist pipeline</label><select id="pipeline"><option value="">Home Assistant preferred</option></select>
+<label for="stt">Speech-to-text engine</label><select id="stt"><option value="">Pipeline default</option></select>
+<label for="tts">Text-to-speech engine</label><select id="tts"><option value="">Pipeline default</option></select>
+<label for="agent">Conversation agent</label><select id="agent"><option value="">Home Assistant default</option></select>
+<button id="discover" class="alt">Refresh available providers</button>
+<button id="savevoice">Save voice &amp; AI defaults</button>
+<p class="note" id="voice_note">Connect to Home Assistant to load provider choices.</p>
+</fieldset>
 <p class="note">Use a dedicated Home Assistant user with only the permissions necessary. The generic service action can control sensitive devices when approved by the user.</p>
 <script>
 (function(){
   function $(id){return document.getElementById(id);}
   function status(msg){$('status').textContent=msg;}
   function send(message){return Pebble.sendMessage('plugin',message);}
+  function options(id,choices,current,defaultText){
+    var sel=$(id);sel.textContent='';
+    function add(value,label){var o=document.createElement('option');o.value=value;o.textContent=label;sel.appendChild(o);}
+    add('',defaultText);
+    (choices||[]).forEach(function(c){add(c.id,c.name||c.id);});
+    if(current&&!Array.from(sel.options).some(function(o){return o.value===current;}))
+      add(current,'Previously selected: '+current);
+    sel.value=current||'';
+  }
+  var choices=null;
+  async function discoverVoice(){
+    $('voice_note').textContent='Looking up Home Assistant providers…';
+    try{
+      var r=await send({type:'voice_discover'});
+      if(!r.ok)throw Error(r.error||'Voice discovery failed');
+      choices=r.discovery;
+      var d=choices.defaults||{};
+      options('pipeline',(choices.pipelines||[]).map(function(p){
+        return {id:p.id,name:p.name+' ('+p.id+')'};
+      }),d.pipeline_id,'Home Assistant preferred');
+      options('stt',choices.stt,d.stt_engine,'Pipeline default');
+      options('tts',choices.tts,d.tts_engine,'Pipeline default');
+      options('agent',choices.agents,d.agent_id,'Home Assistant default');
+      $('voice_note').textContent=(choices.warnings||[]).length?
+        'Some discovery sources were unavailable: '+choices.warnings.join('; '):
+        'Select your preferred defaults. These do not change Home Assistant pipelines.';
+    }catch(e){$('voice_note').textContent='Could not load providers: '+e.message;}
+  }
   async function load(){
     try {var r=await send({type:'status'});
       $('url').value=r.url||'';
       status(r.configured?'Configured (token stored).':'Not configured.');
+      if(r.configured)await discoverVoice();
     }catch(e){status('Could not read plugin status: '+e.message);}
   }
   $('save').onclick=async function(){
@@ -33,7 +72,18 @@ button.alt{background:#555}.note{font-size:13px;opacity:.8}#status{white-space:p
     try{var r=await send({type:'save',url:$('url').value,token:$('token').value});
       $('token').value='';
       status(r.ok?'Saved. You can test the connection now.':(r.error||'Save failed.'));
+      if(r.ok)await discoverVoice();
     }catch(e){status('Save failed: '+e.message);}
+  };
+  $('discover').onclick=discoverVoice;
+  $('savevoice').onclick=async function(){
+    $('voice_note').textContent='Saving preferences…';
+    try {
+      var r=await send({type:'voice_save',values:{
+        pipeline_id:$('pipeline').value,stt_engine:$('stt').value,
+        tts_engine:$('tts').value,agent_id:$('agent').value}});
+      $('voice_note').textContent=r.ok?'Voice and AI defaults saved.':(r.error||'Save failed.');
+    }catch(e){$('voice_note').textContent='Save failed: '+e.message;}
   };
   $('test').onclick=async function(){
     status('Testing Home Assistant…');
