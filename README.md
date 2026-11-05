@@ -29,6 +29,7 @@ Actions:
 | --- | --- | --- | --- |
 | `get_state` | `{entity_id}` | HomeRead | Read one entity |
 | `list_states` | `{domain?, limit?}` | HomeRead | List up to 100 entity states |
+| `get_config` | `{}` | HomeRead | Read shared STT/TTS/agent/pipeline defaults (no credentials) |
 | `read_api` | `{path}` | HomeRead | Allowlisted read-only HA API GET |
 | `conversation` | `{text, agent_id?, conversation_id?}` | HomeConverse | Call HA conversation/process |
 | `render_template` | `{template}` | HomeControl | Render a trusted HA Jinja template |
@@ -54,6 +55,23 @@ if (result.ok) {
 
 Consumer manifests must declare `{ "name": "HomeRead", "plugin": "<UUID>" }` and `{ "name": "InvokeAction", "plugin": "<UUID>" }`. Add `HomeConverse` or `HomeControl` for the other actions as required.
 
+## Shared voice and AI settings
+
+Open the plugin settings and configure **Voice & AI defaults**. The plugin discovers available conversation agents and configured TTS entities through Home Assistant states and its conversation-agent WebSocket API. It also retrieves Assist pipelines and their STT/TTS engines through `assist_pipeline/pipeline/list`. Choose a conversation agent, STT engine, TTS engine, and pipeline; then save.
+
+These choices are stored locally to the plugin, not written into Home Assistant's server settings. The list of STT/TTS engines is limited to engines exposed by current Assist pipelines and TTS entities; unavailable engines cannot be enumerated by this implementation. A selected STT engine does not reconfigure the chosen pipeline automatically. To actually run speech recognition with a particular STT engine, configure an Assist pipeline using that engine in Home Assistant.
+
+The `get_config` action gives other Pebble apps a token-free JSON object with `stt_engine`, `tts_engine`, `agent_id`, and `pipeline_id`. The existing `conversation` action honors the selected `agent_id` unless the caller supplies an explicit override.
+
+```js
+const result = await Pebble.invokeAction({
+  plugin: PLUGIN, action: 'get_config', args: {}
+});
+const preferences = JSON.parse(result.text);
+```
+
+The plugin still does not expose continuous microphone streaming or binary TTS audio. The consuming watchapp must implement that separately.
+
 ## Watchapp compatibility
 
 Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle. The plugin-backed path uses `conversation` for one-shot dictation, without copying the token into watchapp storage, and currently displays the response as text.
@@ -64,4 +82,4 @@ Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle.
 
 GitHub Actions: `.github/workflows/build-ha-plugin.yml` packages the plugin with a pinned version of Pebble's official `pack-plugin-pbw.py`. No SDK or local installation is necessary for the plugin-only package.
 
-The Pebble plugin API is still in preview. Test through sideloading and do not publish plugin-dependent apps to the public store until Pebble's release guidance changes.
+The Pebble plugin API is still evolving. Test updates using the current Pebble mobile app, and verify store submission requirements before publishing.
