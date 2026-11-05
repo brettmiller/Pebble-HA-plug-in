@@ -111,6 +111,9 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert(speech.ok,'Plugin should prepare speech without exporting credentials');
   const meta=JSON.parse(speech.text);
   assert.strictEqual(meta.length,16044);
+  // Official plugin runtime launches a new JS context for each invocation.
+  // Reload handlers with shared persistent storage before requesting chunks.
+  vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
   let audio=[];
   for(let offset=0;offset<meta.length;offset+=meta.chunk_bytes){
     const reply=await callAction('tts_chunk',{session_id:meta.session_id,offset});
@@ -118,6 +121,7 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
     const payload=JSON.parse(reply.text);
     assert.strictEqual(payload.offset,offset);
     audio.push(Buffer.from(payload.audio,'base64'));
+    vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
   }
   assert.strictEqual(Buffer.concat(audio).length,meta.length);
   const end=await callAction('tts_release',{session_id:meta.session_id});
