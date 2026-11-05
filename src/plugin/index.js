@@ -247,39 +247,44 @@ function storeTtsSession(bytes){
     return null;
   }
 }
-// Normalize streamed PCM WAV headers after the complete HTTP body arrives.
-// Some HA engines send placeholder RIFF/data sizes rather than final lengths.
-// Never hide a truly truncated WAV with an ordinary, bounded RIFF header.
+// Reconcile PCM WAV metadata against the fully fetched response. Streaming TTS
+// engines sometimes advertise a finite but incorrect data size. Only repair
+// a valid mono/8kHz/16-bit PCM data chunk; never reinterpret other codecs.
 function normalizeStreamedWav(bytes) {
-  if(bytes.length<44)return bytes;
+  if(bytes.length<44)return {ok:false,error:'WAV too short ('+bytes.length+' bytes)'};
   var view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
   function tag(pos){return String.fromCharCode(bytes[pos],bytes[pos+1],bytes[pos+2],bytes[pos+3]);}
-  if(tag(0)!=='RIFF'||tag(8)!=='WAVE')return bytes;
-  var riffSize=view.getUint32(4,true);
-  var unknownRiff=riffSize===0xFFFFFFFF||riffSize===0x7FFFFFFF||riffSize===0||riffSize===36;
-  var offset=12,hasFmt=false;
+  if(tag(0)!=='RIFF'||tag(8)!=='WAVE')return {ok:false,error:'TTS did not return RIFF WAV'};
+  var offset=12,fmt=null,dataOffset=-1,declared=0;
   while(offset+8<=bytes.length){
-    var id=tag(offset),declared=view.getUint32(offset+4,true),start=offset+8;
-    if(id==='fmt '){
-      if(declared<16||declared>bytes.length-start)return bytes;
-      hasFmt=true;
+    var name=tag(offset),size=view.getUint32(offset+4,true),start=offset+8;
+    if(name==='fmt '){
+      if(size<16||size>bytes.length-start)return {ok:false,error:'Invalid WAV fmt length'};
+      fmt={encoding:view.getUint16(start,true),channels:view.getUint16(start+2,true),
+        rate:view.getUint32(start+4,true),bits:view.getUint16(start+14,true)};
     }
-    if(id==='data'){
-      var available=bytes.length-start;
-      if(!hasFmt||available<2)return bytes;
-      if(declared>available){
-        // A normal-sized RIFF header plus oversized data is corruption, not
-        // an unbounded stream. Leave it for the consumer's strict parser.
-        if(!unknownRiff)return bytes;
-        view.setUint32(offset+4,available,true);
-      }
-      if(unknownRiff)view.setUint32(4,bytes.length-8,true);
-      return bytes;
-    }
-    if(declared>bytes.length-start)return bytes;
-    offset=start+declared+(declared%2);
+    if(name==='data') {dataOffset=offset;declared=size;break;}
+    if(size>bytes.length-start)return {ok:false,error:'Truncated WAV '+name+' chunk'};
+    offset=start+size+(size%2);
   }
-  return bytes;
+  if(!fmt||dataOffset<0)return {ok:false,error:'Missing WAV format or PCM data'};
+  if(fmt.encoding!==1||fmt.channels!==1||fmt.rate!==8000||fmt.bits!==16)
+    return {ok:false,error:'TTS must return mono 8kHz 16-bit PCM WAV'};
+  var available=bytes.length-(dataOffset+8),usable=available-(available%2);
+  if(usable<2)return {ok:false,error:'Empty WAV PCM payload'};
+  // A response may be actually cut short despite HTTP success. We can still
+  // play its complete PCM samples; return a warning describing the shortfall.
+  var declaredRiff=view.getUint32(4,true);
+  var needsFix=declared!==usable||declaredRiff!==bytes.length-8;
+  var warning='';
+  if(declared>usable&&declared!==0xFFFFFFFF&&declared!==0x7FFFFFFF)
+    warning='WAV declared '+declared+' PCM bytes; received '+usable;
+  if(needsFix){
+    view.setUint32(dataOffset+4,usable,true);
+    view.setUint32(4,bytes.length-8,true);
+  }
+  return {ok:true,bytes:bytes,warning:warning,received:usable,declared:declared,
+    corrected:needsFix};
 }
 async function prepareTts(args){
   if(typeof args.text!=='string'||!args.text.trim()||args.text.length>500)
@@ -303,8 +308,10 @@ async function prepareTts(args){
     var bytes=new Uint8Array(await res.arrayBuffer());
     if(bytes.length<44||bytes.length>MAX_TTS_BYTES)
       return failure('PLUGIN_UNAVAILABLE','TTS audio is empty or exceeds size limit');
-    normalizeStreamedWav(bytes);
-    var session=storeTtsSession(bytes);
+    var normalized=normalizeStreamedWav(bytes);
+    if(!normalized.ok)return failure('PLUGIN_UNAVAILABLE',normalized.error);
+    if(normalized.warning)console.log('Home Assistant TTS: '+normalized.warning);
+    var session=storeTtsSession(normalized.bytes);
     if(!session)return failure('PLUGIN_UNAVAILABLE','Insufficient plugin storage for TTS audio');
     return {ok:true,data:session};
   }catch(e){return failure('PLUGIN_UNAVAILABLE','Unable to fetch Home Assistant speech audio');}
