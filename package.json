@@ -1,7 +1,7 @@
 {
   "name": "pebble-home-assistant-plugin",
   "author": "Eric McCormick",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "pebble": {
     "displayName": "Home Assistant Bridge",
     "uuid": "a74370b6-929c-4ec0-b7ee-2fc6fca8db57",
@@ -142,6 +142,18 @@
             "required": [
               "path"
             ]
+          },
+          "callerPermissions": [
+            "HomeRead"
+          ]
+        },
+        {
+          "name": "get_config",
+          "description": "Get shared Home Assistant voice and AI defaults (STT, TTS, conversation agent, Assist pipeline). Never includes credentials.",
+          "parameters": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
           },
           "callerPermissions": [
             "HomeRead"
