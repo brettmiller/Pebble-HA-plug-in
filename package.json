@@ -1,7 +1,7 @@
 {
   "name": "pebble-home-assistant-plugin",
   "author": "Eric McCormick",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "pebble": {
     "displayName": "Home Assistant Bridge",
     "uuid": "a74370b6-929c-4ec0-b7ee-2fc6fca8db57",
@@ -185,7 +185,7 @@
         },
         {
           "name": "tts_prepare",
-          "description": "Generate Home Assistant speech and create a temporary audio session without exposing credentials.",
+          "description": "Synthesize mono 16 kHz PCM16 with Home Assistant, encode 4-bit IMA ADPCM; returns a temporary compressed audio session, format metadata, and continuation predictor/index.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -195,6 +195,16 @@
               },
               "engine_id": {
                 "type": "string"
+              },
+              "predictor": {
+                "type": "integer",
+                "minimum": -32768,
+                "maximum": 32767
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 88
               }
             },
             "required": [
@@ -207,7 +217,7 @@
         },
         {
           "name": "tts_chunk",
-          "description": "Retrieve a bounded base64-encoded WAV chunk from a temporary TTS session.",
+          "description": "Retrieve bounded base64-encoded 16 kHz 4-bit IMA ADPCM audio bytes from a temporary session.",
           "parameters": {
             "type": "object",
             "properties": {
