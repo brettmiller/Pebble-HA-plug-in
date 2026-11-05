@@ -137,12 +137,20 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
     'Stream RIFF placeholder should be replaced by actual bytes');
   assert.strictEqual(repaired.readUInt32LE(40),repaired.length-44,
     'Stream data placeholder should be replaced by actual bytes');
-  // True truncated files with a bounded RIFF size must not be silently fixed.
-  const corruption=Buffer.from(repaired);
-  corruption.writeUInt32LE(corruption.length-8,4);
-  corruption.writeUInt32LE(corruption.length+100,40);
-  const intact=vm.runInNewContext('normalizeStreamedWav',context)(new Uint8Array(corruption));
-  assert.strictEqual(new DataView(intact.buffer,intact.byteOffset,intact.byteLength).getUint32(40,true),corruption.length+100);
+  // Regression: actual HA audio may advertise an ordinary finite WAV size
+  // larger than the HTTP body, not just a recognized streaming placeholder.
+  const finiteOversize=Buffer.from(repaired);
+  finiteOversize.writeUInt32LE(finiteOversize.length-8,4);
+  finiteOversize.writeUInt32LE(finiteOversize.length+100,40);
+  const normalize=vm.runInNewContext('normalizeStreamedWav',context);
+  const reconciled=normalize(new Uint8Array(finiteOversize));
+  assert(reconciled.ok&&reconciled.corrected,'Finite oversized data must be reconciled');
+  assert(reconciled.warning.includes('declared'),'Report when only partial PCM arrived');
+  assert.strictEqual(new DataView(reconciled.bytes.buffer).getUint32(40,true),16000);
+  // Never claim arbitrary content is 8kHz mono PCM.
+  const unsupported=Buffer.from(repaired);
+  unsupported.writeUInt16LE(3,20); // IEEE float format, not PCM
+  assert.strictEqual(normalize(new Uint8Array(unsupported)).ok,false);
 
   const end=await callAction('tts_release',{session_id:meta.session_id});
   assert(end.ok);
