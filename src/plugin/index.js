@@ -50,6 +50,106 @@ async function api(path,method,body) {
     return failure('PLUGIN_UNAVAILABLE','Home Assistant connection failed; check network permission and HTTPS.');
   }
 }
+// Shared, token-free voice/AI preferences. Changing these does not modify
+// the user's Home Assistant server or its preferred Assist pipeline.
+var DEFAULTS_KEY='ha_voice_defaults_v1';
+function voiceDefaults() {
+  var saved={};
+  try{saved=JSON.parse(localStorage.getItem(DEFAULTS_KEY)||'{}')||{};}catch(e){}
+  return {stt_engine:String(saved.stt_engine||''),
+    tts_engine:String(saved.tts_engine||''),
+    agent_id:String(saved.agent_id||''),
+    pipeline_id:String(saved.pipeline_id||'')};
+}
+function saveVoiceDefaults(values) {
+  var next=voiceDefaults();
+  ['stt_engine','tts_engine','agent_id','pipeline_id'].forEach(function(key){
+    if(Object.prototype.hasOwnProperty.call(values,key)) {
+      var val=values[key];
+      if(typeof val!=='string'||val.length>180)throw Error('Invalid '+key);
+      next[key]=val;
+    }
+  });
+  localStorage.setItem(DEFAULTS_KEY,JSON.stringify(next));
+  return next;
+}
+// Request-scoped HA WebSocket discovery. Always close it after listing, never
+// keep a persistent connection running in the plugin.
+function wsList(type) {
+  return new Promise(async function(resolve) {
+    var socket=null,done=false,timer=null;
+    function finish(value) {
+      if(done)return;
+      done=true;
+      if(timer)clearTimeout(timer);
+      if(socket){socket.onmessage=null;socket.onerror=null;socket.onclose=null;try{socket.close();}catch(e){}}
+      resolve(value);
+    }
+    try{
+      var url=baseUrl(),token=await Pebble.secureStorage.getItem(TOKEN_KEY);
+      if(!url||!token||typeof WebSocket!=='function'){finish({ok:false,error:'WebSocket discovery unavailable'});return;}
+      socket=new WebSocket(url.replace(/^https:/,'wss:')+'/api/websocket');
+      timer=setTimeout(function(){finish({ok:false,error:'Discovery timed out'});},7000);
+      socket.onmessage=function(event) {
+        var msg;try{msg=JSON.parse(event.data);}catch(e){return;}
+        if(msg.type==='auth_required')socket.send(JSON.stringify({type:'auth',access_token:token}));
+        else if(msg.type==='auth_invalid')finish({ok:false,error:'Home Assistant rejected credentials'});
+        else if(msg.type==='auth_ok')socket.send(JSON.stringify({id:1,type:type}));
+        else if(msg.type==='result'&&msg.id===1)
+          finish(msg.success?{ok:true,data:msg.result}:{ok:false,error:'HA discovery rejected'});
+      };
+      socket.onerror=function(){finish({ok:false,error:'WebSocket unavailable'});};
+      socket.onclose=function(){finish({ok:false,error:'WebSocket disconnected'});};
+    }catch(e){finish({ok:false,error:'WebSocket discovery failed'});}
+  });
+}
+function uniqueOptions(options) {
+  var seen={};return options.filter(function(o){
+    if(!o.id||seen[o.id])return false;
+    seen[o.id]=true;return true;
+  }).sort(function(a,b){return a.name.localeCompare(b.name);});
+}
+async function discoverVoice() {
+  var states=await api('/api/states');
+  var results=await Promise.all([
+    wsList('assist_pipeline/pipeline/list'),
+    wsList('conversation/agent/list')
+  ]);
+  var pipelineResult=results[0],agentResult=results[1];
+  var pipelines=pipelineResult.ok&&pipelineResult.data&&Array.isArray(pipelineResult.data.pipelines)
+    ?pipelineResult.data.pipelines:[];
+  var entities=states.ok&&Array.isArray(states.data)?states.data:[];
+  var agents=[],tts=[],stt=[];
+  entities.forEach(function(e){
+    if(!e||typeof e.entity_id!=='string')return;
+    var label=String(e.attributes&&e.attributes.friendly_name||e.entity_id);
+    if(e.entity_id.indexOf('conversation.')===0)agents.push({id:e.entity_id,name:label});
+    if(e.entity_id.indexOf('tts.')===0)tts.push({id:e.entity_id,name:label});
+  });
+  var list=agentResult.ok?(Array.isArray(agentResult.data)?agentResult.data:
+    agentResult.data&&agentResult.data.agents||[]):[];
+  list.forEach(function(a){
+    if(a&&a.id)agents.push({id:String(a.id),name:String(a.name||a.id)});
+  });
+  pipelines.forEach(function(p){
+    if(p.stt_engine)stt.push({id:String(p.stt_engine),name:String(p.stt_engine)});
+    if(p.tts_engine)tts.push({id:String(p.tts_engine),name:String(p.tts_engine)});
+    if(p.conversation_engine)agents.push({id:String(p.conversation_engine),name:String(p.conversation_engine)});
+  });
+  return {
+    defaults:voiceDefaults(),
+    agents:uniqueOptions(agents),tts:uniqueOptions(tts),stt:uniqueOptions(stt),
+    pipelines:pipelines.map(function(p){return {
+      id:String(p.id),name:String(p.name||p.id),
+      stt_engine:p.stt_engine||'',tts_engine:p.tts_engine||'',
+      conversation_engine:p.conversation_engine||''
+    };}),
+    preferred_pipeline:pipelineResult.ok&&pipelineResult.data?pipelineResult.data.preferred_pipeline||'':'',
+    warnings:[!states.ok?'Entity discovery unavailable':null,
+      !pipelineResult.ok?'Assist pipeline discovery unavailable':null,
+      !agentResult.ok?'Conversation agent discovery unavailable':null].filter(Boolean)
+  };
+}
 function compact(state){
   var a=state.attributes||{};
   return {entity_id:state.entity_id,state:state.state,
@@ -107,12 +207,15 @@ Pebble.registerActionHandler(async function(request,respond) {
         respond.error('INVALID_ARGS','API path not on read-only allowlist');return;
       }
       r=await api(args.path);break;
+    case 'get_config':
+      r={ok:true,data:voiceDefaults()};break;
     case 'conversation':
       if(typeof args.text!=='string'||!args.text.trim()||args.text.length>4000){
         respond.error('INVALID_ARGS','Message must contain 1–4000 characters');return;
       }
       var body={text:args.text,language:'en'};
-      if(args.agent_id)body.agent_id=String(args.agent_id);
+      var selectedAgent=args.agent_id||voiceDefaults().agent_id;
+      if(selectedAgent)body.agent_id=String(selectedAgent);
       if(args.conversation_id)body.conversation_id=String(args.conversation_id);
       r=await api('/api/conversation/process','POST',body);
       if(r.ok){
@@ -164,6 +267,14 @@ Pebble.registerConfigHandler(async function(message,respond){
         respond({ok:true,url:url});return;
       }catch(e){respond({ok:false,error:e.message});return;}
     }
+    case 'voice_status':
+      respond({ok:true,defaults:voiceDefaults()});return;
+    case 'voice_discover':
+      respond({ok:true,discovery:await discoverVoice()});return;
+    case 'voice_save':
+      try {respond({ok:true,defaults:saveVoiceDefaults(message.values||{})});}
+      catch(e){respond({ok:false,error:e.message});}
+      return;
     case 'test':{
       // Check an inexpensive API endpoint first, then the authenticated
       // configuration endpoint to pinpoint where a 400 originates.
@@ -180,6 +291,7 @@ Pebble.registerConfigHandler(async function(message,respond){
     case 'forget':
       await Pebble.secureStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(URL_KEY);
+      localStorage.removeItem(DEFAULTS_KEY);
       Pebble.refreshSources(SOURCES);
       respond({ok:true});return;
     default:respond({ok:false,error:'Unknown configuration request'});
