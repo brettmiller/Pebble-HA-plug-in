@@ -12,6 +12,9 @@ assert(pkg.plugin.sources.some(source=>source.items.includes('configured')));
 assert(pkg.plugin.actions.find(a=>a.name==='call_service').callerPermissions.includes('HomeControl'));
 assert(pkg.plugin.actions.find(a=>a.name==='conversation').callerPermissions.includes('HomeConverse'));
 assert(pkg.plugin.actions.find(a=>a.name==='get_config').callerPermissions.includes('HomeRead'));
+for(const name of ['tts_prepare','tts_chunk','tts_release'])
+  assert(pkg.plugin.actions.find(a=>a.name===name).callerPermissions.includes('HomeConverse'));
+
 assert(pkg.plugin.sources.find(s=>s.items.includes('entity')).callerPermissions.includes('HomeRead'));
 let config,source,action,stored={},local={},calls=[];
 const secure={
@@ -56,7 +59,15 @@ const context={Pebble,console,Date,JSON,Number,String,Object,Array,Promise,isFin
       path==='/api/states'?[{entity_id:'sensor.temp',state:'21.5',attributes:{friendly_name:'Temperature',unit_of_measurement:'°C'}},
         {entity_id:'light.kitchen',state:'on',attributes:{friendly_name:'Kitchen'}}]:
       path==='/api/conversation/process'?{conversation_id:'abc',response:{speech:{plain:{speech:'Lights are on.'}}}}:
+      path==='/api/tts_get_url'?{path:'/api/tts_proxy/demo.wav'}:
       {entity_id:'light.kitchen',state:'on',attributes:{}};
+    if(path==='/api/tts_proxy/demo.wav'){
+      const wav=new Uint8Array(44+16000);
+      wav.set(Buffer.from('RIFF', 'ascii'),0);
+      wav.set(Buffer.from('WAVEfmt ', 'ascii'),8);
+      wav.set(Buffer.from('data', 'ascii'),36);
+      return {ok:true,status:200,arrayBuffer:async()=>wav.buffer};
+    }
     return {ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>data,text:async()=>JSON.stringify(data)};
   },
   URL
@@ -96,6 +107,26 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert(r.ok);assert(JSON.parse(r.text).text==='Lights are on.');
   const lastConversation=calls.filter(c=>c.url.endsWith('/api/conversation/process')).pop();
   assert.strictEqual(JSON.parse(lastConversation.opt.body).agent_id,'conversation.google_ai');
+  const speech=await callAction('tts_prepare',{text:'Lights are on.'});
+  assert(speech.ok,'Plugin should prepare speech without exporting credentials');
+  const meta=JSON.parse(speech.text);
+  assert.strictEqual(meta.length,16044);
+  let audio=[];
+  for(let offset=0;offset<meta.length;offset+=meta.chunk_bytes){
+    const reply=await callAction('tts_chunk',{session_id:meta.session_id,offset});
+    assert(reply.ok,'Chunk '+offset+' should be readable');
+    const payload=JSON.parse(reply.text);
+    assert.strictEqual(payload.offset,offset);
+    audio.push(Buffer.from(payload.audio,'base64'));
+  }
+  assert.strictEqual(Buffer.concat(audio).length,meta.length);
+  const end=await callAction('tts_release',{session_id:meta.session_id});
+  assert(end.ok);
+  const gone=await callAction('tts_chunk',{session_id:meta.session_id,offset:0});
+  assert.strictEqual(gone.ok,false,'Released audio sessions must be unavailable');
+  const ttsPost=calls.find(c=>c.url.endsWith('/api/tts_get_url'));
+  assert.strictEqual(JSON.parse(ttsPost.opt.body).engine_id,'tts.test');
+  assert(!speech.text.includes('secret'),'Audio action must not return credentials');
   await callConfig({type:'voice_save',values:{agent_id:''}});
   r=await callAction('call_service',{domain:'light',service:'turn_on',data:{entity_id:'light.kitchen'}});
   assert(r.ok);
