@@ -58,10 +58,10 @@ jobs:
           # Action artifacts are always ZIP archives. A GitHub Release asset
           # preserves the .pbw extension and downloads directly to the phone.
           if ! gh release view dev-latest >/dev/null 2>&1; then
-            gh release create dev-latest \\
-              --target "$GITHUB_SHA" \\
-              --title "Latest development build (not a stable release)" \\
-              --notes "Automatically updated from successful main-branch builds. Install only for testing. The downloadable PBW is a Pebble package, not a ZIP to extract." \\
+            gh release create dev-latest \
+              --target "$GITHUB_SHA" \
+              --title "Latest development build (not a stable release)" \
+              --notes "Automatically updated from successful main-branch builds. Install only for testing. The downloadable PBW is a Pebble package, not a ZIP to extract." \
               --prerelease
           fi
           gh release upload dev-latest build/pebble-home-assistant-plugin.pbw --clobber
