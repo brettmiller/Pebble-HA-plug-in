@@ -11,6 +11,7 @@ assert(pkg.plugin.sources.some(source=>source.items.includes('entity')));
 assert(pkg.plugin.sources.some(source=>source.items.includes('configured')));
 assert(pkg.plugin.actions.find(a=>a.name==='call_service').callerPermissions.includes('HomeControl'));
 assert(pkg.plugin.actions.find(a=>a.name==='conversation').callerPermissions.includes('HomeConverse'));
+assert(pkg.plugin.actions.find(a=>a.name==='get_config').callerPermissions.includes('HomeRead'));
 assert(pkg.plugin.sources.find(s=>s.items.includes('entity')).callerPermissions.includes('HomeRead'));
 let config,source,action,stored={},local={},calls=[];
 const secure={
@@ -50,8 +51,25 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   let data=await callSource('entity');
   assert.strictEqual(data.instances.length,2);
   assert.strictEqual(data.instances[0].properties.value.numericValue.value,21.5);
+  let discovery=await callConfig({type:'voice_discover'});
+  assert(discovery.ok);
+  assert(discovery.discovery.agents.some(a=>a.id==='conversation.google_ai')===false,
+    'Mocks have no conversation entity by default');
+  let defaults=await callConfig({type:'voice_save',values:{
+    stt_engine:'stt.test',tts_engine:'tts.test',agent_id:'conversation.google_ai',
+    pipeline_id:'preferred-id'}});
+  assert(defaults.ok);
+  assert.strictEqual(defaults.defaults.agent_id,'conversation.google_ai');
+  assert(!JSON.stringify(defaults).includes('secret'));
+  let cfg=await callAction('get_config');
+  assert(cfg.ok);
+  assert.strictEqual(JSON.parse(cfg.text).pipeline_id,'preferred-id');
+  assert(!cfg.text.includes('secret'));
   let r=await callAction('conversation',{text:'Hello'});
   assert(r.ok);assert(JSON.parse(r.text).text==='Lights are on.');
+  const lastConversation=calls.filter(c=>c.url.endsWith('/api/conversation/process')).pop();
+  assert.strictEqual(JSON.parse(lastConversation.opt.body).agent_id,'conversation.google_ai');
+  await callConfig({type:'voice_save',values:{agent_id:''}});
   r=await callAction('call_service',{domain:'light',service:'turn_on',data:{entity_id:'light.kitchen'}});
   assert(r.ok);
   r=await callAction('read_api',{path:'/api/auth'});
@@ -65,5 +83,6 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
     'Only requests with JSON bodies should declare Content-Type');
   s=await callConfig({type:'forget'});assert(s.ok);
   assert(!stored.ha_bridge_token);
+  assert(!local.ha_voice_defaults_v1,'Forget also clears voice and AI preferences');
   console.log('Home Assistant plugin API and credential isolation checks passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
