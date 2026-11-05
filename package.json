@@ -1,7 +1,7 @@
 {
   "name": "pebble-home-assistant-plugin",
   "author": "Eric McCormick",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "pebble": {
     "displayName": "Home Assistant Bridge",
     "uuid": "a74370b6-929c-4ec0-b7ee-2fc6fca8db57",
@@ -177,6 +177,69 @@
             },
             "required": [
               "text"
+            ]
+          },
+          "callerPermissions": [
+            "HomeConverse"
+          ]
+        },
+        {
+          "name": "tts_prepare",
+          "description": "Generate Home Assistant speech and create a temporary audio session without exposing credentials.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "engine_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ]
+          },
+          "callerPermissions": [
+            "HomeConverse"
+          ]
+        },
+        {
+          "name": "tts_chunk",
+          "description": "Retrieve a bounded base64-encoded WAV chunk from a temporary TTS session.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "type": "string"
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "session_id",
+              "offset"
+            ]
+          },
+          "callerPermissions": [
+            "HomeConverse"
+          ]
+        },
+        {
+          "name": "tts_release",
+          "description": "Release a temporary TTS audio session.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_id"
             ]
           },
           "callerPermissions": [
