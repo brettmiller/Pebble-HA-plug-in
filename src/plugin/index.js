@@ -247,6 +247,40 @@ function storeTtsSession(bytes){
     return null;
   }
 }
+// Normalize streamed PCM WAV headers after the complete HTTP body arrives.
+// Some HA engines send placeholder RIFF/data sizes rather than final lengths.
+// Never hide a truly truncated WAV with an ordinary, bounded RIFF header.
+function normalizeStreamedWav(bytes) {
+  if(bytes.length<44)return bytes;
+  var view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  function tag(pos){return String.fromCharCode(bytes[pos],bytes[pos+1],bytes[pos+2],bytes[pos+3]);}
+  if(tag(0)!=='RIFF'||tag(8)!=='WAVE')return bytes;
+  var riffSize=view.getUint32(4,true);
+  var unknownRiff=riffSize===0xFFFFFFFF||riffSize===0x7FFFFFFF||riffSize===0||riffSize===36;
+  var offset=12,hasFmt=false;
+  while(offset+8<=bytes.length){
+    var id=tag(offset),declared=view.getUint32(offset+4,true),start=offset+8;
+    if(id==='fmt '){
+      if(declared<16||declared>bytes.length-start)return bytes;
+      hasFmt=true;
+    }
+    if(id==='data'){
+      var available=bytes.length-start;
+      if(!hasFmt||available<2)return bytes;
+      if(declared>available){
+        // A normal-sized RIFF header plus oversized data is corruption, not
+        // an unbounded stream. Leave it for the consumer's strict parser.
+        if(!unknownRiff)return bytes;
+        view.setUint32(offset+4,available,true);
+      }
+      if(unknownRiff)view.setUint32(4,bytes.length-8,true);
+      return bytes;
+    }
+    if(declared>bytes.length-start)return bytes;
+    offset=start+declared+(declared%2);
+  }
+  return bytes;
+}
 async function prepareTts(args){
   if(typeof args.text!=='string'||!args.text.trim()||args.text.length>500)
     return failure('INVALID_ARGS','Speech text must contain 1–500 characters');
@@ -269,6 +303,7 @@ async function prepareTts(args){
     var bytes=new Uint8Array(await res.arrayBuffer());
     if(bytes.length<44||bytes.length>MAX_TTS_BYTES)
       return failure('PLUGIN_UNAVAILABLE','TTS audio is empty or exceeds size limit');
+    normalizeStreamedWav(bytes);
     var session=storeTtsSession(bytes);
     if(!session)return failure('PLUGIN_UNAVAILABLE','Insufficient plugin storage for TTS audio');
     return {ok:true,data:session};
