@@ -186,6 +186,64 @@ Pebble.registerSourceHandler(async function(request,respond){
     return {instanceId:state.entity_id,properties:sourceProperties(state)};
   })});
 });
+// Ephemeral, bounded audio sessions. No audio or credentials in persistent storage.
+// A caller reads small encoded chunks through repeatable plugin actions.
+var ttsSessions={},ttsSerial=0,MAX_TTS_BYTES=1500000,TTS_CHUNK_BYTES=6000;
+function base64Bytes(bytes) {
+  var abc='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  var out='';
+  for(var i=0;i<bytes.length;i+=3){
+    var a=bytes[i],b=i+1<bytes.length?bytes[i+1]:0,c=i+2<bytes.length?bytes[i+2]:0;
+    out+=abc[a>>2]+abc[((a&3)<<4)|(b>>4)]+(i+1<bytes.length?abc[((b&15)<<2)|(c>>6)]:'=')+
+      (i+2<bytes.length?abc[c&63]:'=');
+  }
+  return out;
+}
+function cleanTtsSessions(){
+  var now=Date.now();
+  Object.keys(ttsSessions).forEach(function(id){if(ttsSessions[id].expires<now)delete ttsSessions[id];});
+}
+async function prepareTts(args){
+  if(typeof args.text!=='string'||!args.text.trim()||args.text.length>500)
+    return failure('INVALID_ARGS','Speech text must contain 1–500 characters');
+  var engine=String(args.engine_id||voiceDefaults().tts_engine||'');
+  if(!/^tts\.[a-z0-9_]+$/.test(engine))
+    return failure('INVALID_ARGS','Select a TTS engine in Home Assistant Bridge settings');
+  var generated=await api('/api/tts_get_url','POST',{
+    engine_id:engine,message:args.text,cache:true,
+    options:{preferred_format:'wav',preferred_sample_rate:8000,
+      preferred_sample_channels:1,preferred_sample_bytes:2}
+  });
+  if(!generated.ok)return generated;
+  var path=generated.data&&generated.data.path;
+  if(typeof path!=='string'||!/^\/api\/tts_proxy\/[a-zA-Z0-9_./%-]+$/.test(path))
+    return failure('PLUGIN_UNAVAILABLE','Home Assistant did not return a valid TTS path');
+  var token=await Pebble.secureStorage.getItem(TOKEN_KEY);
+  try {
+    var res=await fetch(baseUrl()+path,{headers:{Authorization:'Bearer '+token}});
+    if(!res.ok)return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status);
+    var bytes=new Uint8Array(await res.arrayBuffer());
+    if(bytes.length<44||bytes.length>MAX_TTS_BYTES)
+      return failure('PLUGIN_UNAVAILABLE','TTS audio is empty or exceeds size limit');
+    // Session storage is in-memory only; the plugin handles the authenticated
+    // fetch, and consumers never receive the private TTS proxy path or token.
+    cleanTtsSessions();
+    var id='tts'+Date.now().toString(36)+(++ttsSerial).toString(36);
+    ttsSessions[id]={bytes:bytes,expires:Date.now()+120000};
+    return {ok:true,data:{session_id:id,length:bytes.length,chunk_bytes:TTS_CHUNK_BYTES}};
+  }catch(e){return failure('PLUGIN_UNAVAILABLE','Unable to fetch Home Assistant speech audio');}
+}
+function ttsChunk(args){
+  cleanTtsSessions();
+  var s=ttsSessions[String(args.session_id||'')],offset=Number(args.offset);
+  if(!s)return failure('PLUGIN_UNAVAILABLE','TTS session expired; start a new request');
+  if(!Number.isInteger(offset)||offset<0||offset>=s.bytes.length||offset%TTS_CHUNK_BYTES!==0)
+    return failure('INVALID_ARGS','Invalid TTS chunk offset');
+  var end=Math.min(s.bytes.length,offset+TTS_CHUNK_BYTES);
+  s.expires=Date.now()+120000;
+  return {ok:true,data:{offset:offset,length:s.bytes.length,
+    audio:base64Bytes(s.bytes.subarray(offset,end)),done:end===s.bytes.length}};
+}
 var SAFE_READ=/^\/api\/(?:config|services|states(?:\/[a-z][a-z0-9_]*\.[a-z0-9_]+)?|calendars|history\/period(?:\/[0-9TZ:+.-]+)?|logbook(?:\/[0-9TZ:+.-]+)?)(?:\?[a-zA-Z0-9_=&%.,:+-]+)?$/;
 Pebble.registerActionHandler(async function(request,respond) {
   var args=request.args||{},r,refresh=[];
@@ -209,6 +267,13 @@ Pebble.registerActionHandler(async function(request,respond) {
       r=await api(args.path);break;
     case 'get_config':
       r={ok:true,data:voiceDefaults()};break;
+    case 'tts_prepare':
+      r=await prepareTts(args);break;
+    case 'tts_chunk':
+      r=ttsChunk(args);break;
+    case 'tts_release':
+      delete ttsSessions[String(args.session_id||'')];
+      r={ok:true,data:{released:true}};break;
     case 'conversation':
       if(typeof args.text!=='string'||!args.text.trim()||args.text.length>4000){
         respond.error('INVALID_ARGS','Message must contain 1–4000 characters');return;
