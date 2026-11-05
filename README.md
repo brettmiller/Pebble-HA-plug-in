@@ -73,7 +73,7 @@ const result = await Pebble.invokeAction({
 const preferences = JSON.parse(result.text);
 ```
 
-The plugin now exposes synthesized WAV audio through request-scoped, base64-encoded chunks. Audio is fetched and held temporarily inside the plugin; the consuming app handles WAV decoding and watch playback without Home Assistant credentials. Sessions expire after inactivity and should be explicitly released. This has higher request overhead than a streaming API. Continuous microphone / Assist WebSocket streaming is not exposed by the current plugin API.
+The plugin now exposes synthesized WAV audio through request-scoped, base64-encoded chunks. Audio is fetched and stored temporarily in plugin-owned localStorage in bounded base64 chunks; the consuming app handles WAV decoding and watch playback without Home Assistant credentials. This is required because Pebble starts a fresh plugin JavaScript instance for every action. Sessions expire after three minutes of inactivity and should be explicitly released. Only one in-progress session is retained, and temporary audio is not stored in the credential keystore. This has higher request overhead than a streaming API. Continuous microphone / Assist WebSocket streaming is not exposed by the current plugin API.
 
 ## Watchapp compatibility
 
