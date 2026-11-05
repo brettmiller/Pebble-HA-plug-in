@@ -23,7 +23,31 @@ const Pebble={secureStorage:secure,refreshSources:()=>{},
   registerConfigHandler:fn=>config=fn,
   registerSourceHandler:fn=>source=fn,
   registerActionHandler:fn=>action=fn};
-const context={Pebble,console,Date,JSON,Number,String,Object,Array,Promise,isFinite,
+class MockWebSocket {
+  constructor(url) {
+    assert.strictEqual(url,'wss://ha.example.com/api/websocket');
+    this.send=(raw)=>{
+      const message=JSON.parse(raw);
+      if(message.type==='auth') {
+        assert.strictEqual(message.access_token,'secret');
+        this.onmessage({data:JSON.stringify({type:'auth_ok'})});
+      } else {
+        let result=message.type==='assist_pipeline/pipeline/list'?
+          {preferred_pipeline:'pipeline-1',pipelines:[{
+            id:'pipeline-1',name:'Default Assist',
+            stt_engine:'stt.mock',tts_engine:'tts.mock',
+            conversation_engine:'conversation.google_ai'
+          }]}:
+          {agents:[{id:'conversation.google_ai',name:'Google AI'}]};
+        this.onmessage({data:JSON.stringify({id:1,type:'result',success:true,result})});
+      }
+    };
+    this.close=()=>{};
+    Promise.resolve().then(()=>this.onmessage({data:JSON.stringify({type:'auth_required'})}));
+  }
+}
+const context={Pebble,console,Date,JSON,Number,String,Object,Array,Promise,isFinite,WebSocket:MockWebSocket,
+  setTimeout:()=>1,clearTimeout:()=>{},
   localStorage:{getItem:k=>local[k]||null,setItem:(k,v)=>local[k]=v,removeItem:k=>delete local[k]},
   fetch:async(url,opt)=>{
     calls.push({url,opt});
@@ -53,8 +77,11 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert.strictEqual(data.instances[0].properties.value.numericValue.value,21.5);
   let discovery=await callConfig({type:'voice_discover'});
   assert(discovery.ok);
-  assert(discovery.discovery.agents.some(a=>a.id==='conversation.google_ai')===false,
-    'Mocks have no conversation entity by default');
+  assert(discovery.discovery.agents.some(a=>a.id==='conversation.google_ai'));
+  assert(discovery.discovery.stt.some(e=>e.id==='stt.mock'));
+  assert(discovery.discovery.tts.some(e=>e.id==='tts.mock'));
+  assert(discovery.discovery.pipelines.some(p=>p.id==='pipeline-1'));
+  assert.strictEqual(discovery.discovery.preferred_pipeline,'pipeline-1');
   let defaults=await callConfig({type:'voice_save',values:{
     stt_engine:'stt.test',tts_engine:'tts.test',agent_id:'conversation.google_ai',
     pipeline_id:'preferred-id'}});
