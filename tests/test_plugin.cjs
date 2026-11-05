@@ -66,6 +66,14 @@ const context={Pebble,console,Date,JSON,Number,String,Object,Array,Promise,isFin
       wav.set(Buffer.from('RIFF', 'ascii'),0);
       wav.set(Buffer.from('WAVEfmt ', 'ascii'),8);
       wav.set(Buffer.from('data', 'ascii'),36);
+      const hdr=new DataView(wav.buffer);
+      hdr.setUint32(4,0xFFFFFFFF,true); // streaming RIFF size
+      hdr.setUint32(16,16,true); // fmt size
+      hdr.setUint16(20,1,true); // PCM
+      hdr.setUint16(22,1,true); // mono
+      hdr.setUint32(24,8000,true);
+      hdr.setUint16(34,16,true);
+      hdr.setUint32(40,0x7FFFFFFF,true); // alternate indefinite data size
       return {ok:true,status:200,arrayBuffer:async()=>wav.buffer};
     }
     return {ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>data,text:async()=>JSON.stringify(data)};
@@ -124,6 +132,18 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
     vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
   }
   assert.strictEqual(Buffer.concat(audio).length,meta.length);
+  const repaired=Buffer.concat(audio);
+  assert.strictEqual(repaired.readUInt32LE(4),repaired.length-8,
+    'Stream RIFF placeholder should be replaced by actual bytes');
+  assert.strictEqual(repaired.readUInt32LE(40),repaired.length-44,
+    'Stream data placeholder should be replaced by actual bytes');
+  // True truncated files with a bounded RIFF size must not be silently fixed.
+  const corruption=Buffer.from(repaired);
+  corruption.writeUInt32LE(corruption.length-8,4);
+  corruption.writeUInt32LE(corruption.length+100,40);
+  const intact=vm.runInNewContext('normalizeStreamedWav',context)(new Uint8Array(corruption));
+  assert.strictEqual(new DataView(intact.buffer,intact.byteOffset,intact.byteLength).getUint32(40,true),corruption.length+100);
+
   const end=await callAction('tts_release',{session_id:meta.session_id});
   assert(end.ok);
   const gone=await callAction('tts_chunk',{session_id:meta.session_id,offset:0});
