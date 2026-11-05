@@ -308,8 +308,8 @@ function encodeIma(samples,predictor,index) {
     if(sign)diff=-diff;
     var step=IMA_STEPS[idx],bit=0,vpdiff=step>>3;
     if(diff>=step){bit|=4;diff-=step;vpdiff+=step;}
-    if(diff>=step/2){bit|=2;diff-=step/2;vpdiff+=step>>1;}
-    if(diff>=step/4){bit|=1;vpdiff+=step>>2;}
+    if(diff>=(step>>1)){bit|=2;diff-=(step>>1);vpdiff+=step>>1;}
+    if(diff>=(step>>2)){bit|=1;vpdiff+=step>>2;}
     var code=bit|sign;
     p+=sign?-vpdiff:vpdiff;
     p=Math.max(-32768,Math.min(32767,p));
