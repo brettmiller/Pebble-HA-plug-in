@@ -186,9 +186,11 @@ Pebble.registerSourceHandler(async function(request,respond){
     return {instanceId:state.entity_id,properties:sourceProperties(state)};
   })});
 });
-// Ephemeral, bounded audio sessions. No audio or credentials in persistent storage.
-// A caller reads small encoded chunks through repeatable plugin actions.
-var ttsSessions={},ttsSerial=0,MAX_TTS_BYTES=1500000,TTS_CHUNK_BYTES=6000;
+// Pebble restarts the plugin script for EVERY action. TTS chunks therefore
+// live briefly in plugin-owned localStorage, never in JS module variables.
+// These are transient speech bytes (not credentials); release/TTL removes them.
+var MAX_TTS_BYTES=1500000,TTS_CHUNK_BYTES=6000;
+var TTS_INDEX_KEY='ha_tts_sessions_v2',TTS_TTL_MS=180000;
 function base64Bytes(bytes) {
   var abc='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   var out='';
@@ -199,9 +201,51 @@ function base64Bytes(bytes) {
   }
   return out;
 }
+function sessionKey(id){return 'ha_tts_v2_'+id;}
+function sessionList(){
+  try{var value=JSON.parse(localStorage.getItem(TTS_INDEX_KEY)||'[]');
+    return Array.isArray(value)?value:[];}catch(e){return [];}
+}
+function deleteTtsSession(id){
+  var key=sessionKey(id),raw=localStorage.getItem(key),count=0;
+  try{count=JSON.parse(raw||'{}').count||0;}catch(e){}
+  // Reject tampered metadata that would otherwise trigger unbounded deletion.
+  count=Math.min(251,Math.max(0,count));
+  for(var i=0;i<count;i++)localStorage.removeItem(key+'_'+i);
+  localStorage.removeItem(key);
+}
 function cleanTtsSessions(){
-  var now=Date.now();
-  Object.keys(ttsSessions).forEach(function(id){if(ttsSessions[id].expires<now)delete ttsSessions[id];});
+  var now=Date.now(),keep=[];
+  sessionList().forEach(function(id){
+    if(!/^tts[a-z0-9]+$/.test(id))return;
+    var meta=null;
+    try{meta=JSON.parse(localStorage.getItem(sessionKey(id))||'null');}catch(e){}
+    if(!meta||meta.expires<now){deleteTtsSession(id);return;}
+    keep.push(id);
+  });
+  localStorage.setItem(TTS_INDEX_KEY,JSON.stringify(keep));
+  return keep;
+}
+function storeTtsSession(bytes){
+  var keep=cleanTtsSessions();
+  // Keep a single audio session to bound storage usage on the phone.
+  keep.forEach(deleteTtsSession);
+  localStorage.setItem(TTS_INDEX_KEY,'[]');
+  var id='tts'+Date.now().toString(36)+Math.floor(Math.random()*0x100000000).toString(36);
+  var key=sessionKey(id),count=Math.ceil(bytes.length/TTS_CHUNK_BYTES);
+  var meta={length:bytes.length,count:count,expires:Date.now()+TTS_TTL_MS};
+  try{
+    localStorage.setItem(key,JSON.stringify(meta));
+    for(var i=0;i<count;i++){
+      var start=i*TTS_CHUNK_BYTES;
+      localStorage.setItem(key+'_'+i,base64Bytes(bytes.subarray(start,start+TTS_CHUNK_BYTES)));
+    }
+    localStorage.setItem(TTS_INDEX_KEY,JSON.stringify([id]));
+    return {session_id:id,length:bytes.length,chunk_bytes:TTS_CHUNK_BYTES};
+  }catch(e){
+    deleteTtsSession(id);
+    return null;
+  }
 }
 async function prepareTts(args){
   if(typeof args.text!=='string'||!args.text.trim()||args.text.length>500)
@@ -225,24 +269,27 @@ async function prepareTts(args){
     var bytes=new Uint8Array(await res.arrayBuffer());
     if(bytes.length<44||bytes.length>MAX_TTS_BYTES)
       return failure('PLUGIN_UNAVAILABLE','TTS audio is empty or exceeds size limit');
-    // Session storage is in-memory only; the plugin handles the authenticated
-    // fetch, and consumers never receive the private TTS proxy path or token.
-    cleanTtsSessions();
-    var id='tts'+Date.now().toString(36)+(++ttsSerial).toString(36);
-    ttsSessions[id]={bytes:bytes,expires:Date.now()+120000};
-    return {ok:true,data:{session_id:id,length:bytes.length,chunk_bytes:TTS_CHUNK_BYTES}};
+    var session=storeTtsSession(bytes);
+    if(!session)return failure('PLUGIN_UNAVAILABLE','Insufficient plugin storage for TTS audio');
+    return {ok:true,data:session};
   }catch(e){return failure('PLUGIN_UNAVAILABLE','Unable to fetch Home Assistant speech audio');}
 }
 function ttsChunk(args){
   cleanTtsSessions();
-  var s=ttsSessions[String(args.session_id||'')],offset=Number(args.offset);
-  if(!s)return failure('PLUGIN_UNAVAILABLE','TTS session expired; start a new request');
-  if(!Number.isInteger(offset)||offset<0||offset>=s.bytes.length||offset%TTS_CHUNK_BYTES!==0)
+  var id=String(args.session_id||''),offset=Number(args.offset);
+  if(!/^tts[a-z0-9]+$/.test(id))return failure('INVALID_ARGS','Invalid TTS session');
+  var meta=null;
+  try{meta=JSON.parse(localStorage.getItem(sessionKey(id))||'null');}catch(e){}
+  if(!meta)return failure('PLUGIN_UNAVAILABLE','TTS session expired; start a new request');
+  if(!Number.isInteger(offset)||offset<0||offset>=meta.length||offset%TTS_CHUNK_BYTES!==0)
     return failure('INVALID_ARGS','Invalid TTS chunk offset');
-  var end=Math.min(s.bytes.length,offset+TTS_CHUNK_BYTES);
-  s.expires=Date.now()+120000;
-  return {ok:true,data:{offset:offset,length:s.bytes.length,
-    audio:base64Bytes(s.bytes.subarray(offset,end)),done:end===s.bytes.length}};
+  var index=offset/TTS_CHUNK_BYTES;
+  var audio=localStorage.getItem(sessionKey(id)+'_'+index);
+  if(!audio)return failure('PLUGIN_UNAVAILABLE','TTS audio chunk unavailable');
+  meta.expires=Date.now()+TTS_TTL_MS;
+  localStorage.setItem(sessionKey(id),JSON.stringify(meta));
+  return {ok:true,data:{offset:offset,length:meta.length,audio:audio,
+    done:index===meta.count-1}};
 }
 var SAFE_READ=/^\/api\/(?:config|services|states(?:\/[a-z][a-z0-9_]*\.[a-z0-9_]+)?|calendars|history\/period(?:\/[0-9TZ:+.-]+)?|logbook(?:\/[0-9TZ:+.-]+)?)(?:\?[a-zA-Z0-9_=&%.,:+-]+)?$/;
 Pebble.registerActionHandler(async function(request,respond) {
@@ -272,7 +319,10 @@ Pebble.registerActionHandler(async function(request,respond) {
     case 'tts_chunk':
       r=ttsChunk(args);break;
     case 'tts_release':
-      delete ttsSessions[String(args.session_id||'')];
+      deleteTtsSession(String(args.session_id||''));
+      localStorage.setItem(TTS_INDEX_KEY,JSON.stringify(sessionList().filter(function(id){
+        return id!==String(args.session_id||'');
+      })));
       r={ok:true,data:{released:true}};break;
     case 'conversation':
       if(typeof args.text!=='string'||!args.text.trim()||args.text.length>4000){
