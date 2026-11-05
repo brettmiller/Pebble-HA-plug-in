@@ -2,7 +2,7 @@
 // Credentials never leave secureStorage and never appear in source/action results.
 var URL_KEY='ha_bridge_url';
 var TOKEN_KEY='ha_bridge_token';
-var SOURCES=['home_assistant/entity','home_assistant/configured'];
+var SOURCES=['agent/entity','agent/configured'];
 function baseUrl() { return (localStorage.getItem(URL_KEY)||'').replace(/\/+$/,''); }
 function validBase(value) {
   var s=String(value||'').trim().replace(/\/+$/,'');
@@ -133,7 +133,7 @@ Pebble.registerActionHandler(async function(request,respond) {
       var payload=Object.assign({},args.data||{});
       if(args.target)payload.target=args.target;
       r=await api('/api/services/'+args.domain+'/'+args.service,'POST',payload);
-      refresh=['home_assistant/entity'];break;
+      refresh=['agent/entity'];break;
     case 'fire_event':
       if(!safePart(args.event_type)){respond.error('INVALID_ARGS','Invalid event type');return;}
       r=await api('/api/events/'+args.event_type,'POST',args.event_data||{});break;
