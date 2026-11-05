@@ -20,8 +20,8 @@ Plugin UUID: `a74370b6-929c-4ec0-b7ee-2fc6fca8db57`.
 
 Sources:
 
-- `home_assistant/configured`: whether a URL and token are configured.
-- `home_assistant/entity`: state, numeric/boolean readings, name, unit, domain and ID from HA states. Up to 400 entries per update; use `get_state` for an entity not in the first update.
+- `agent/configured`: whether a URL and token are configured.
+- `agent/entity`: state, numeric/boolean readings, name, unit, domain and ID from HA states. Up to 400 entries per update; use `get_state` for an entity not in the first update.
 
 Actions:
 
