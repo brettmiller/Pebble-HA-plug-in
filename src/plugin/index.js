@@ -247,54 +247,92 @@ function storeTtsSession(bytes){
     return null;
   }
 }
-// Reconcile PCM WAV metadata against the fully fetched response. Streaming TTS
-// engines sometimes advertise a finite but incorrect data size. Only repair
-// a valid mono/8kHz/16-bit PCM data chunk; never reinterpret other codecs.
-function normalizeStreamedWav(bytes) {
-  if(bytes.length<44)return {ok:false,error:'WAV too short ('+bytes.length+' bytes)'};
+// Decode a complete mono PCM16 WAV. HA may ignore the preferred sample rate;
+// inspect the returned header rather than treating bytes as a different codec.
+function wavPcm16(bytes) {
+  if(bytes.length<44)return {ok:false,error:'WAV too short'};
   var view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
-  function tag(pos){return String.fromCharCode(bytes[pos],bytes[pos+1],bytes[pos+2],bytes[pos+3]);}
+  function tag(p){return String.fromCharCode(bytes[p],bytes[p+1],bytes[p+2],bytes[p+3]);}
   if(tag(0)!=='RIFF'||tag(8)!=='WAVE')return {ok:false,error:'TTS did not return RIFF WAV'};
-  var offset=12,fmt=null,dataOffset=-1,declared=0;
-  while(offset+8<=bytes.length){
-    var name=tag(offset),size=view.getUint32(offset+4,true),start=offset+8;
-    if(name==='fmt '){
-      if(size<16||size>bytes.length-start)return {ok:false,error:'Invalid WAV fmt length'};
-      fmt={encoding:view.getUint16(start,true),channels:view.getUint16(start+2,true),
-        rate:view.getUint32(start+4,true),bits:view.getUint16(start+14,true)};
+  var pos=12,fmt=null,start=-1;
+  while(pos+8<=bytes.length) {
+    var size=view.getUint32(pos+4,true),data=pos+8,name=tag(pos);
+    if(name==='fmt ') {
+      if(size<16||data+size>bytes.length)return {ok:false,error:'Invalid WAV format'};
+      fmt={encoding:view.getUint16(data,true),channels:view.getUint16(data+2,true),
+        rate:view.getUint32(data+4,true),bits:view.getUint16(data+14,true)};
     }
-    if(name==='data') {dataOffset=offset;declared=size;break;}
-    if(size>bytes.length-start)return {ok:false,error:'Truncated WAV '+name+' chunk'};
-    offset=start+size+(size%2);
+    if(name==='data'){start=data;break;}
+    if(size>bytes.length-data)return {ok:false,error:'Truncated WAV '+name};
+    pos=data+size+(size&1);
   }
-  if(!fmt||dataOffset<0)return {ok:false,error:'Missing WAV format or PCM data'};
-  if(fmt.encoding!==1||fmt.channels!==1||fmt.rate!==8000||fmt.bits!==16)
-    return {ok:false,error:'TTS must return mono 8kHz 16-bit PCM WAV'};
-  var available=bytes.length-(dataOffset+8),usable=available-(available%2);
-  if(usable<2)return {ok:false,error:'Empty WAV PCM payload'};
-  // A response may be actually cut short despite HTTP success. We can still
-  // play its complete PCM samples; return a warning describing the shortfall.
-  var declaredRiff=view.getUint32(4,true);
-  var needsFix=declared!==usable||declaredRiff!==bytes.length-8;
-  var warning='';
-  if(declared>usable&&declared!==0xFFFFFFFF&&declared!==0x7FFFFFFF)
-    warning='WAV declared '+declared+' PCM bytes; received '+usable;
-  if(needsFix){
-    view.setUint32(dataOffset+4,usable,true);
-    view.setUint32(4,bytes.length-8,true);
+  if(!fmt||start<0)return {ok:false,error:'Missing WAV audio format or data'};
+  if(fmt.encoding!==1||fmt.channels!==1||fmt.bits!==16||
+     fmt.rate<8000||fmt.rate>48000)
+    return {ok:false,error:'TTS requires mono PCM16 WAV (8-48 kHz)'};
+  // The HTTP response is complete. Some HA engines publish incorrect finite
+  // or streamed data lengths; consume actual complete sample pairs.
+  var length=Math.floor((bytes.length-start)/2);
+  if(!length)return {ok:false,error:'Empty WAV audio'};
+  var samples=new Int16Array(length);
+  for(var i=0;i<length;i++)samples[i]=view.getInt16(start+i*2,true);
+  return {ok:true,samples:samples,rate:fmt.rate};
+}
+// Convert the actual source rate to exactly 16 kHz, before ADPCM coding.
+// Linear interpolation provides deterministic conversion without assuming a
+// provider honored the requested output format.
+function resample16k(samples,rate) {
+  if(rate===16000)return samples;
+  var count=Math.max(1,Math.round(samples.length*16000/rate));
+  var output=new Int16Array(count);
+  for(var i=0;i<count;i++) {
+    var at=i*rate/16000,a=Math.floor(at),b=Math.min(a+1,samples.length-1);
+    if(a>=samples.length)a=samples.length-1;
+    output[i]=Math.round(samples[a]+(samples[b]-samples[a])*(at-a));
   }
-  return {ok:true,bytes:bytes,warning:warning,received:usable,declared:declared,
-    corrected:needsFix};
+  return output;
+}
+// Standard IMA ADPCM, high nibble first, no per-chunk reset. The caller passes
+// predictor/index from the previous sentence, keeping decoder state continuous.
+var IMA_STEPS=[7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,
+  41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,
+  253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,
+  1166,1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,3327,3660,
+  4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,
+  12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767];
+var IMA_INDEX=[-1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8];
+function encodeIma(samples,predictor,index) {
+  var output=new Uint8Array(Math.ceil(samples.length/2)),p=predictor,idx=index;
+  for(var i=0;i<samples.length;i++) {
+    var diff=samples[i]-p,sign=diff<0?8:0;
+    if(sign)diff=-diff;
+    var step=IMA_STEPS[idx],bit=0,vpdiff=step>>3;
+    if(diff>=step){bit|=4;diff-=step;vpdiff+=step;}
+    if(diff>=step/2){bit|=2;diff-=step/2;vpdiff+=step>>1;}
+    if(diff>=step/4){bit|=1;vpdiff+=step>>2;}
+    var code=bit|sign;
+    p+=sign?-vpdiff:vpdiff;
+    p=Math.max(-32768,Math.min(32767,p));
+    idx=Math.max(0,Math.min(88,idx+IMA_INDEX[code]));
+    if((i&1)===0)output[i>>1]=code<<4;
+    else output[i>>1]|=code;
+  }
+  return {bytes:output,predictor:p,index:idx};
 }
 async function prepareTts(args){
   if(typeof args.text!=='string'||!args.text.trim()||args.text.length>500)
     return failure('INVALID_ARGS','Speech text must contain 1–500 characters');
   var engine=String(args.engine_id||voiceDefaults().tts_engine||'');
+  var predictor=args.predictor===undefined?0:args.predictor;
+  var index=args.index===undefined?0:args.index;
+  if(!Number.isInteger(predictor)||predictor< -32768||predictor>32767||
+     !Number.isInteger(index)||index<0||index>88)
+    return failure('INVALID_ARGS','Invalid IMA ADPCM predictor or step index');
   if(!/^tts\.[a-z0-9_]+$/.test(engine))
     return failure('INVALID_ARGS','Select a TTS engine in Home Assistant Bridge settings');
   var generated=await api('/api/tts_get_url','POST',{
     engine_id:engine,message:args.text,cache:true,
-    options:{preferred_format:'wav',preferred_sample_rate:8000,
+    options:{preferred_format:'wav',preferred_sample_rate:16000,
       preferred_sample_channels:1,preferred_sample_bytes:2}
   });
   if(!generated.ok)return generated;
@@ -308,11 +346,18 @@ async function prepareTts(args){
     var bytes=new Uint8Array(await res.arrayBuffer());
     if(bytes.length<44||bytes.length>MAX_TTS_BYTES)
       return failure('PLUGIN_UNAVAILABLE','TTS audio is empty or exceeds size limit');
-    var normalized=normalizeStreamedWav(bytes);
-    if(!normalized.ok)return failure('PLUGIN_UNAVAILABLE',normalized.error);
-    if(normalized.warning)console.log('Home Assistant TTS: '+normalized.warning);
-    var session=storeTtsSession(normalized.bytes);
+    var parsed=wavPcm16(bytes);
+    if(!parsed.ok)return failure('PLUGIN_UNAVAILABLE',parsed.error);
+    var pcm=resample16k(parsed.samples,parsed.rate);
+    var compressed=encodeIma(pcm,predictor,index);
+    var session=storeTtsSession(compressed.bytes);
     if(!session)return failure('PLUGIN_UNAVAILABLE','Insufficient plugin storage for TTS audio');
+    session.format='ima_adpcm4';
+    session.sample_rate=16000;
+    session.channels=1;
+    session.sample_count=pcm.length;
+    session.next_predictor=compressed.predictor;
+    session.next_index=compressed.index;
     return {ok:true,data:session};
   }catch(e){return failure('PLUGIN_UNAVAILABLE','Unable to fetch Home Assistant speech audio');}
 }
