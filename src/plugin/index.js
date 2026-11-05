@@ -349,6 +349,12 @@ async function prepareTts(args){
     var parsed=wavPcm16(bytes);
     if(!parsed.ok)return failure('PLUGIN_UNAVAILABLE',parsed.error);
     var pcm=resample16k(parsed.samples,parsed.rate);
+    // A full ADPCM byte represents two samples. Pad odd-length speech with
+    // its final sample so consecutive sentences retain matching codec state.
+    if(pcm.length&1) {
+      var even=new Int16Array(pcm.length+1);
+      even.set(pcm);even[pcm.length]=pcm[pcm.length-1];pcm=even;
+    }
     var compressed=encodeIma(pcm,predictor,index);
     var session=storeTtsSession(compressed.bytes);
     if(!session)return failure('PLUGIN_UNAVAILABLE','Insufficient plugin storage for TTS audio');
