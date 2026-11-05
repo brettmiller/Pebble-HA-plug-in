@@ -32,8 +32,8 @@ Actions:
 | `get_config` | `{}` | HomeRead | Read shared STT/TTS/agent/pipeline defaults (no credentials) |
 | `read_api` | `{path}` | HomeRead | Allowlisted read-only HA API GET |
 | `conversation` | `{text, agent_id?, conversation_id?}` | HomeConverse | Call HA conversation/process |
-| `tts_prepare` | `{text, engine_id?}` | HomeConverse | Synthesize 8kHz mono WAV with plugin-held credentials; returns a temporary session ID, byte length and chunk size |
-| `tts_chunk` | `{session_id, offset}` | HomeConverse | Return a base64 WAV chunk (6000 raw bytes) |
+| `tts_prepare` | `{text, engine_id?}` | HomeConverse | Request 16kHz mono PCM16 speech from HA, resample if necessary, encode as 16kHz 4-bit IMA ADPCM; optional `{predictor,index}` carry state across sentences. Returns session ID, byte count, codec metadata and `{next_predictor,next_index}` |
+| `tts_chunk` | `{session_id, offset}` | HomeConverse | Return a base64 IMA ADPCM chunk (up to 6000 compressed bytes) |
 | `tts_release` | `{session_id}` | HomeConverse | Free temporary speech data |
 | `render_template` | `{template}` | HomeControl | Render a trusted HA Jinja template |
 | `call_service` | `{domain,service,data?,target?}` | HomeControl | Invoke an arbitrary HA service |
@@ -73,11 +73,11 @@ const result = await Pebble.invokeAction({
 const preferences = JSON.parse(result.text);
 ```
 
-The plugin now exposes synthesized WAV audio through request-scoped, base64-encoded chunks. Audio is fetched and stored temporarily in plugin-owned localStorage in bounded base64 chunks; the consuming app handles WAV decoding and watch playback without Home Assistant credentials. This is required because Pebble starts a fresh plugin JavaScript instance for every action. Sessions expire after three minutes of inactivity and should be explicitly released. Only one in-progress session is retained, and temporary audio is not stored in the credential keystore. This has higher request overhead than a streaming API. Continuous microphone / Assist WebSocket streaming is not exposed by the current plugin API.
+The plugin now exposes 16 kHz, 4-bit IMA ADPCM audio through request-scoped, base64-encoded chunks. Home Assistant is asked for mono PCM16 WAV at 16 kHz; the plugin checks the actual format, resamples supported mono PCM16 if needed, and compresses it before storing chunks. Audio is fetched and stored temporarily in plugin-owned localStorage in bounded base64 chunks; the consuming app handles WAV decoding and watch playback without Home Assistant credentials. This is required because Pebble starts a fresh plugin JavaScript instance for every action. Sessions expire after three minutes of inactivity and should be explicitly released. Only one in-progress session is retained, and temporary audio is not stored in the credential keystore. This has higher request overhead than a streaming API. Continuous microphone / Assist WebSocket streaming is not exposed by the current plugin API.
 
 ## Watchapp compatibility
 
-Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle. The plugin-backed path uses `conversation` for one-shot dictation, without copying the token into watchapp storage, and uses `tts_prepare` / `tts_chunk` for spoken responses when enabled.
+Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle. The plugin-backed path uses `conversation` for one-shot dictation, without copying the token into watchapp storage, and uses `tts_prepare` / `tts_chunk` for spoken responses when enabled. The `continuous-native-conversation` consumer branch receives and forwards IMA ADPCM directly to the watch's 16 kHz decoder, without double-encoding.
 
 **Limitation:** Continuous watch microphone streaming is not yet supported in plugin mode. It requires a long-running binary Assist WebSocket; current plugin actions are request-scoped and expose no streaming bridge. The watchapp blocks this feature while plugin mode is selected rather than silently using direct credentials. One-shot watch dictation and text-to-speech responses use only the plugin. Plugin-owned audio sessions rely on the plugin preview runtime retaining an active handler instance across chunk requests and require testing on a physical phone/watch.
 
@@ -86,3 +86,9 @@ Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle.
 GitHub Actions: `.github/workflows/build-ha-plugin.yml` packages the plugin with a pinned version of Pebble's official `pack-plugin-pbw.py`. No SDK or local installation is necessary for the plugin-only package.
 
 The Pebble plugin API is still evolving. Test updates using the current Pebble mobile app, and verify store submission requirements before publishing.
+
+## Compressed speech contract (v0.2.5)
+
+`tts_prepare` returns `{session_id,length,chunk_bytes,format:'ima_adpcm4',sample_rate:16000,channels:1,sample_count,next_predictor,next_index}`. The payload chunks are raw *headerless* IMA ADPCM (high nibble decoded first), base64 encoded; they are **not** WAV chunks. One decoded sample is represented by each nibble. A new watch response initializes predictor/index to zero, and multiple sentences preserve their predictor/index by supplying the previous response's `next_predictor` and `next_index` on the next `tts_prepare` call. Each encoded response pads an odd final PCM sample to a complete byte. The watch must select `SpeakerPcmFormat_16kHz_16bit` after decoding. The legacy direct Home Assistant mode still uses 8 kHz ADPCM, so consumers need to switch speaker formats according to the response source.
+
+If an older consumer still expects WAV from this plugin, update that consumer before installing this release.
