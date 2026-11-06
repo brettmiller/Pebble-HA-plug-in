@@ -461,7 +461,9 @@ async function prepareTts(args){
   if(typeof path!=='string'||!/^\/api\/tts_proxy\/[a-zA-Z0-9_./%-]+$/.test(path))
     return failure('PLUGIN_UNAVAILABLE','Home Assistant did not return a valid TTS path');
   var token=await Pebble.secureStorage.getItem(TOKEN_KEY);
+  var stage='start',xhrProblem='';
   try {
+    stage='binary download';
     // The built-in Pebble app receives binary speech correctly via XHR.
     // Prefer that transport if the plugin host exposes it, then fall back
     // to fetch for other plugin runtimes and document any corruption.
@@ -471,23 +473,32 @@ async function prepareTts(args){
         bytes=await fetchTtsXhr(path,token);
         binaryTransport='xhr_arraybuffer';
         if(looksLikeMangledBinary(bytes))bytes=null;
-      }catch(e){bytes=null;}
-    }
+      }catch(e){
+        xhrProblem='xhr_'+String(e&&e.name||'error').slice(0,35);
+        bytes=null;
+      }
+    } else xhrProblem='xhr_unavailable';
     if(!bytes){
+      stage='fetch HTTP';
       var res=await fetch(baseUrl()+path,{headers:{Authorization:'Bearer '+token}});
-      if(!res.ok)return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status);
+      if(!res.ok)return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status+
+        (xhrProblem?' ('+xhrProblem+')':''));
+      stage='fetch arrayBuffer';
       bytes=new Uint8Array(await res.arrayBuffer());
       binaryTransport='fetch_arraybuffer';
     }
     if(looksLikeMangledBinary(bytes))
       return failure('PLUGIN_UNAVAILABLE',
-        'Bridge binary download corrupted the streamed WAV header (FF became FD). '+
-        'Update Pebble plugin runtime binary HTTP support; refusing static audio.');
+        'Bridge binary HTTP corrupts WAV bytes ('+binaryTransport+
+        (xhrProblem?', '+xhrProblem:'')+'). Plugin runtime binary transport needs repair.');
     if(bytes.length<44||bytes.length>MAX_TTS_BYTES)
       return failure('PLUGIN_UNAVAILABLE','TTS audio is empty or exceeds size limit');
+    stage='parse WAV';
     var parsed=wavPcm16(bytes);
     if(!parsed.ok)return failure('PLUGIN_UNAVAILABLE',parsed.error);
+    stage='resample WAV';
     var pcm=resample8k(parsed.samples,parsed.rate);
+    stage='store WAV session';
     var result=packageWavSession(pcm,'home_assistant');
     if(result.ok) {
       result.data.audio_diagnostics.engine_id=engine;
@@ -502,7 +513,11 @@ async function prepareTts(args){
       result.data.audio_diagnostics.streamed_data=parsed.streamed_data;
     }
     return result;
-  }catch(e){return failure('PLUGIN_UNAVAILABLE','Unable to fetch Home Assistant speech audio');}
+  }catch(e){
+    var reason=e&&e.name?String(e.name).slice(0,40):'exception';
+    return failure('PLUGIN_UNAVAILABLE','TTS '+stage+' failed ('+reason+
+      (xhrProblem?', '+xhrProblem:'')+').');
+  }
 }
 function ttsChunk(args){
   cleanTtsSessions();
