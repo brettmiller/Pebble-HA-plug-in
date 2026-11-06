@@ -118,6 +118,27 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert.strictEqual(JSON.parse(lastConversation.opt.body).agent_id,'conversation.google_ai');
   // A 16kHz HA WAV must be normalized to the precise 8kHz PCM16 WAV
   // that Gemini's phone-side lowPassFilter/encodeADPCM pipeline expects.
+  // Bridge-origin tone uses the same persisted WAV session and chunk transport.
+  // Unlike a phone-generated tone, it exercises every plugin byte boundary.
+  let reference=await callAction('tts_prepare',{test_tone:true});
+  assert(reference.ok,'Bridge diagnostic must not require a TTS provider');
+  let refMeta=JSON.parse(reference.text);
+  assert.strictEqual(refMeta.length,32044);
+  assert.strictEqual(refMeta.sample_rate,8000);
+  assert.strictEqual(refMeta.audio_diagnostics.source,'bridge_test_tone');
+  let refParts=[];
+  for(let off=0;off<refMeta.length;off+=refMeta.chunk_bytes){
+    vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
+    const part=await callAction('tts_chunk',{session_id:refMeta.session_id,offset:off});
+    assert(part.ok,'Bridge tone chunk '+off);
+    refParts.push(Buffer.from(JSON.parse(part.text).audio,'base64'));
+  }
+  const refWave=Buffer.concat(refParts);
+  let refHash=2166136261>>>0;
+  for(const b of refWave)refHash=Math.imul((refHash^b)>>>0,16777619)>>>0;
+  assert.strictEqual(refHash,refMeta.wav_checksum);
+  assert.strictEqual(refWave.readUInt32LE(24),8000);
+  await callAction('tts_release',{session_id:refMeta.session_id});
   const speech=await callAction('tts_prepare',{text:'Lights are on.'});
   assert(speech.ok,'Plugin should deliver a valid WAV without exporting credentials');
   const meta=JSON.parse(speech.text);
@@ -127,6 +148,8 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert.strictEqual(meta.bits_per_sample,16);
   assert.strictEqual(meta.sample_count,8000);
   assert.strictEqual(meta.length,16044);
+  assert.strictEqual(meta.audio_diagnostics.input_rate,16000);
+  assert.strictEqual(meta.audio_diagnostics.source,'home_assistant');
   // Pebble starts a fresh plugin JS context for every action.
   vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
   let audio=[];
