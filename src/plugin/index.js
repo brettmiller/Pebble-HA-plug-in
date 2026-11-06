@@ -415,31 +415,6 @@ function looksLikeMangledBinary(bytes) {
   }
   return false;
 }
-// In a plugin host that damaged fetch().arrayBuffer(), try the same
-// binary XHR API known to work in PebbleKit JS. The request remains inside
-// the bridge, retaining its own credential and permission boundaries.
-function fetchTtsXhr(path,token) {
-  return new Promise(function(resolve,reject){
-    if(typeof XMLHttpRequest!=='function'){
-      reject(Error('Binary XMLHttpRequest unavailable in plugin runtime'));return;
-    }
-    var xhr=new XMLHttpRequest();
-    try {
-      xhr.open('GET',baseUrl()+path,true);
-      xhr.responseType='arraybuffer';
-      xhr.timeout=30000;
-      xhr.setRequestHeader('Authorization','Bearer '+token);
-      xhr.onload=function(){
-        if(xhr.status!==200){reject(Error('TTS audio HTTP '+xhr.status));return;}
-        if(!xhr.response){reject(Error('Empty binary TTS response'));return;}
-        resolve(new Uint8Array(xhr.response));
-      };
-      xhr.onerror=function(){reject(Error('Binary TTS network request failed'));};
-      xhr.ontimeout=function(){reject(Error('Binary TTS request timed out'));};
-      xhr.send();
-    }catch(e){reject(e);}
-  });
-}
 async function prepareTts(args){
   if(args.test_tone===true)return packageWavSession(bridgeTestTone(),'bridge_test_tone');
   if(typeof args.text!=='string'||!args.text.trim()||args.text.length>500)
@@ -461,39 +436,21 @@ async function prepareTts(args){
   if(typeof path!=='string'||!/^\/api\/tts_proxy\/[a-zA-Z0-9_./%-]+$/.test(path))
     return failure('PLUGIN_UNAVAILABLE','Home Assistant did not return a valid TTS path');
   var token=await Pebble.secureStorage.getItem(TOKEN_KEY);
-  var stage='start',xhrProblem='';
+  var stage='start';
   try {
-    stage='binary download';
-    // The built-in Pebble app receives binary speech correctly via XHR.
-    // Prefer that transport if the plugin host exposes it, then fall back
-    // to fetch for other plugin runtimes and document any corruption.
-    var bytes=null,binaryTransport='';
-    stage='check XHR support';
-    if(typeof XMLHttpRequest==='function') {
-      try {
-        stage='XHR audio request';
-        bytes=await fetchTtsXhr(path,token);
-        binaryTransport='xhr_arraybuffer';
-        stage='validate XHR binary';
-        if(looksLikeMangledBinary(bytes))bytes=null;
-      }catch(e){
-        xhrProblem='xhr_'+String(e&&e.name||'error').slice(0,35);
-        bytes=null;
-      }
-    } else xhrProblem='xhr_unavailable';
-    if(!bytes){
-      stage='fetch HTTP';
-      var res=await fetch(baseUrl()+path,{headers:{Authorization:'Bearer '+token}});
-      if(!res.ok)return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status+
-        (xhrProblem?' ('+xhrProblem+')':''));
-      stage='fetch arrayBuffer';
-      bytes=new Uint8Array(await res.arrayBuffer());
-      binaryTransport='fetch_arraybuffer';
-    }
+    // Pebble plugins expose fetch(), but the XMLHttpRequest global is a
+    // throwing accessors: even typeof XMLHttpRequest raises an Error.
+    // Never access it. Binary integrity must be checked on the fetch result.
+    stage='fetch HTTP';
+    var res=await fetch(baseUrl()+path,{headers:{Authorization:'Bearer '+token}});
+    if(!res.ok)return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status);
+    stage='fetch arrayBuffer';
+    var bytes=new Uint8Array(await res.arrayBuffer());
+    var binaryTransport='fetch_arraybuffer';
     if(looksLikeMangledBinary(bytes))
       return failure('PLUGIN_UNAVAILABLE',
-        'Bridge binary HTTP corrupts WAV bytes ('+binaryTransport+
-        (xhrProblem?', '+xhrProblem:'')+'). Plugin runtime binary transport needs repair.');
+        'Plugin fetch returned an altered WAV header (0xFDFDFDFD). '+
+        'Binary audio appears corrupted before parsing; refusing static.');
     if(bytes.length<44||bytes.length>MAX_TTS_BYTES)
       return failure('PLUGIN_UNAVAILABLE','TTS audio is empty or exceeds size limit');
     stage='parse WAV';
@@ -525,7 +482,7 @@ async function prepareTts(args){
       .replace(/[A-Za-z0-9_-]{60,}/g,'[redacted]')
       .slice(0,100);
     return failure('PLUGIN_UNAVAILABLE','TTS '+stage+' failed ('+reason+
-      (xhrProblem?', '+xhrProblem:'')+')'+(details?': '+details:''));
+      ')'+(details?': '+details:''));
   }
 }
 function ttsChunk(args){
