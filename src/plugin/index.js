@@ -442,7 +442,14 @@ async function prepareTts(args){
     // throwing accessors: even typeof XMLHttpRequest raises an Error.
     // Never access it. Binary integrity must be checked on the fetch result.
     stage='fetch HTTP';
-    var res=await fetch(baseUrl()+path,{headers:{Authorization:'Bearer '+token}});
+    // Pebble plugin fetch is not standard browser fetch. Its host only
+    // preserves binary bytes when responseType is set ON THE REQUEST.
+    // Calling response.arrayBuffer() without this option re-encodes UTF-8
+    // replacement characters and produces the 0xFDFDFDFD / static symptom.
+    var res=await fetch(baseUrl()+path,{
+      headers:{Authorization:'Bearer '+token},
+      responseType:'arraybuffer'
+    });
     if(!res.ok)return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status);
     stage='fetch arrayBuffer';
     var bytes=new Uint8Array(await res.arrayBuffer());
