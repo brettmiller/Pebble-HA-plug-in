@@ -1,5 +1,17 @@
 # Home Assistant Bridge — Pebble Plugin Preview
 
+## Developer audio integration
+
+For Pebble apps that speak Home Assistant responses, use the **[Home Assistant Bridge Audio SDK](sdk/README.md)**. The shared files contain the tested streaming WAV and Gemini-compatible ADPCM transport, BLE pacing, sentence prefetch, dual watch PCM buffers, and telemetry. Developers can copy:
+
+- **[Phone module — ha_audio.js](sdk/ha_audio.js)** (place at `src/pkjs/ha_audio.js`)
+- **[Watch implementation — ha_audio.c](sdk/ha_audio.c)** (place at `src/c/ha_audio.c`)
+- **[Watch header — ha_audio.h](sdk/ha_audio.h)** (place at `src/c/ha_audio.h`)
+
+The **[SDK guide](sdk/README.md)** has the exact `require()`, `#include`, message keys, permissions, and callback wiring. It works with the existing plugin and does not require any app-specific HA URL or token. Native watch playback still requires these included C files; plugins cannot directly own a watch app's speaker.
+
+
+
 Standalone, phone-side Pebble plugin for reusable access to a user's Home Assistant installation.
 
 ## Install
