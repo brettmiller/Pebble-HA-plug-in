@@ -275,7 +275,7 @@ function wavPcm16(bytes) {
   // Home Assistant streamed WAV may use unknown (0xFFFFFFFF/0x7FFFFFFF)
   // or overstated sizes, so in those cases use available complete frames.
   var available=bytes.length-start;
-  var streamed=declaredSize===0xFFFFFFFF||declaredSize===0x7FFFFFFF;
+  var streamed=declaredSize===0||declaredSize===0xFFFFFFFF||declaredSize===0x7FFFFFFF;
   var usable=(streamed||declaredSize>available)?
     available:Math.min(available,declaredSize);
   usable-=usable%2;
@@ -336,7 +336,7 @@ function wavChecksum(bytes) {
   }
   return hash>>>0;
 }
-function pcmStats(samples) {
+function pcmStats(samples,rate) {
   var peak=0,power=0,zeroCrossings=0,clipped=0,prev=0;
   for(var i=0;i<samples.length;i++){
     var value=samples[i];
@@ -348,7 +348,7 @@ function pcmStats(samples) {
   }
   return {peak:peak,rms:Math.round(Math.sqrt(power/Math.max(1,samples.length))),
     zero_crossings:zeroCrossings,clipped:clipped,
-    duration_ms:Math.round(samples.length/8)};
+    duration_ms:Math.round(samples.length*1000/(rate||8000))};
 }
 function bridgeTestTone() {
   var samples=new Int16Array(8000*7);
@@ -405,7 +405,7 @@ async function prepareTts(args){
     if(result.ok) {
       result.data.audio_diagnostics.input_rate=parsed.rate;
       result.data.audio_diagnostics.requested_rate=sourceRate;
-      result.data.audio_diagnostics.input=pcmStats(parsed.samples);
+      result.data.audio_diagnostics.input=pcmStats(parsed.samples,parsed.rate);
       result.data.audio_diagnostics.declared_data_bytes=parsed.declared_data_bytes;
       result.data.audio_diagnostics.available_data_bytes=parsed.available_data_bytes;
       result.data.audio_diagnostics.used_data_bytes=parsed.used_data_bytes;
