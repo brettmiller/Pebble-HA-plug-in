@@ -16,6 +16,7 @@ module.exports={
     var HA_PLUGIN_UUID=options.pluginId||DEFAULT_PLUGIN_ID;
     var PCM_DEBUG_STORAGE_KEY=options.diagnosticsKey||'HA_AUDIO_LIBRARY_DIAG_V1';
     var onError=options.onError||null,onComplete=options.onComplete||null;
+    var onStats=options.onStats||null;
     var lastAnswer='';
     var sentenceQueue=[],readyAudioQueue=[];
     var MAX_READY_AUDIO_SENTENCES=2;
@@ -356,7 +357,6 @@ function startPluginTTSFetchLoop(gen){
     pluginPreparedSentence=null;
     console.log('Home Assistant plugin TTS: '+String(error.message||error));
     if(onError)onError(error);
-    if(onError)onError(error);
     Pebble.sendAppMessage({COMMAND:'AUDIO_STOP'},function(){},function(){});
   });
 }
@@ -499,10 +499,24 @@ function startBLESendLoop() {
         },function(){reject(Error('Failed to reset watch audio'));});
       });
     }
+    function handleMessage(payload){
+      if(!payload||payload.COMMAND!=='AUDIO_STATS')return false;
+      var stats={timestamp:new Date().toISOString()};
+      String(payload.TEXT||'').split(',').forEach(function(pair){
+        var kv=pair.split('=');
+        if(kv.length!==2||!/^(empty|empty_ms|partial|zero|peak|frames)$/.test(kv[0]))return;
+        var n=Number(kv[1]);
+        if(Number.isInteger(n)&&n>=0)stats[kv[0]]=n;
+      });
+      localStorage.setItem(PCM_DEBUG_STORAGE_KEY+'_WATCH',JSON.stringify(stats));
+      if(onStats)onStats(stats);
+      return true;
+    }
     function diagnostics(){
       try{return JSON.parse(localStorage.getItem(PCM_DEBUG_STORAGE_KEY)||'null');}
       catch(e){return null;}
     }
-    return {speak:speak,stop:stop,diagnostics:diagnostics};
+    return {speak:speak,stop:stop,diagnostics:diagnostics,
+      handleMessage:handleMessage};
   }
 };
