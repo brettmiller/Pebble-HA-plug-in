@@ -17,6 +17,7 @@ for(const name of ['tts_prepare','tts_chunk','tts_release'])
 
 assert(pkg.plugin.sources.find(s=>s.items.includes('entity')).callerPermissions.includes('HomeRead'));
 let config,source,action,stored={},local={},calls=[];
+let transientProxyFailures=0;
 const secure={
   getItem:async k=>stored[k]||null,
   setItem:async(k,v)=>{stored[k]=v;},
@@ -62,6 +63,10 @@ const context={Pebble,console,Date,JSON,Number,String,Object,Array,Promise,isFin
       path==='/api/tts_get_url'?{path:'/api/tts_proxy/demo.wav'}:
       {entity_id:'light.kitchen',state:'on',attributes:{}};
     if(path==='/api/tts_proxy/demo.wav'){
+      if(transientProxyFailures>0){
+        transientProxyFailures--;
+        return {ok:false,status:500};
+      }
       assert.strictEqual(opt.responseType,'arraybuffer',
         'Pebble plugin fetch must request binary responseType before downloading WAV');
       const wav=new Uint8Array(44+32000);
@@ -237,6 +242,29 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   const stillWorks=await callAction('tts_prepare',{text:'Testing safe plugin fetch'});
   assert(stillWorks.ok,'Plugin fetch must work even with throwing XHR global');
   await callAction('tts_release',{session_id:JSON.parse(stillWorks.text).session_id});
+  // Home Assistant intermittently returns HTTP 500 for a generated
+  // tts_proxy file when a longer answer prepares its next sentence.
+  // Bridge must request a FRESH, uncached proxy URL rather than fail.
+  transientProxyFailures=1;
+  const retryBegin=calls.length;
+  const recovered=await callAction('tts_prepare',{text:'Retry proxy playback sentence.'});
+  assert(recovered.ok,'One transient TTS proxy 500 must recover without lost audio');
+  const retryCalls=calls.slice(retryBegin);
+  const retries=retryCalls.filter(c=>c.url.endsWith('/api/tts_get_url'));
+  assert.strictEqual(retries.length,2,'Must regenerate TTS URL after HTTP 500');
+  assert.strictEqual(JSON.parse(retries[1].opt.body).cache,false,
+    'Recovered request must disable cached TTS URL');
+  await callAction('tts_release',{session_id:JSON.parse(recovered.text).session_id});
+  // Persistent server errors still fail after a finite number of requests.
+  transientProxyFailures=4;
+  const terminalBegin=calls.length;
+  const notRecovered=await callAction('tts_prepare',{text:'Persistent TTS proxy failure.'});
+  assert.strictEqual(notRecovered.ok,false);
+  assert(String(notRecovered.message).includes('HTTP 500'));
+  assert.strictEqual(calls.slice(terminalBegin).filter(
+    c=>c.url.endsWith('/api/tts_get_url')).length,3,
+    'Persistent TTS failures must stop after exactly three attempts');
+  transientProxyFailures=0;
   // WAV may have metadata after its finite data chunk. Do not interpret
   // those trailing chunks as speech; doing so creates audible noise.
   const withTrailer=Buffer.alloc(wav.length+20);
