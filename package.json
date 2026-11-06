@@ -1,7 +1,7 @@
 {
   "name": "pebble-home-assistant-plugin",
   "author": "Eric McCormick",
-  "version": "0.2.20",
+  "version": "0.2.21",
   "pebble": {
     "displayName": "Home Assistant Bridge",
     "uuid": "a74370b6-929c-4ec0-b7ee-2fc6fca8db57",
@@ -14,7 +14,7 @@
       "LocalNetwork"
     ],
     "plugin": {
-      "description": "Reusable Home Assistant bridge for Pebble: entity readings, API discovery, conversation, templates, and permission-gated device control. User-configured HTTPS server and private token storage.",
+      "description": "Reusable Home Assistant bridge: entities, Assist, secure TTS, and controls. Audio SDK integration: https://github.com/ericlmccormick/Pebble-HA-plug-in/tree/main/sdk",
       "script": "src/plugin/index.js",
       "definesPermissions": [
         {
