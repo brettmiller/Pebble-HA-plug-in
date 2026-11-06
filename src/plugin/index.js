@@ -233,7 +233,12 @@ function storeTtsSession(bytes){
   localStorage.setItem(TTS_INDEX_KEY,'[]');
   var id='tts'+Date.now().toString(36)+Math.floor(Math.random()*0x100000000).toString(36);
   var key=sessionKey(id),count=Math.ceil(bytes.length/TTS_CHUNK_BYTES);
-  var meta={length:bytes.length,count:count,expires:Date.now()+TTS_TTL_MS};
+  var hashes=[];
+  for(var n=0;n<count;n++){
+    var pos=n*TTS_CHUNK_BYTES;
+    hashes.push(wavChecksum(bytes.subarray(pos,Math.min(bytes.length,pos+TTS_CHUNK_BYTES))));
+  }
+  var meta={length:bytes.length,count:count,hashes:hashes,expires:Date.now()+TTS_TTL_MS};
   try{
     localStorage.setItem(key,JSON.stringify(meta));
     for(var i=0;i<count;i++){
@@ -396,6 +401,7 @@ function packageWavSession(pcm,source) {
   // plugin startup / interprocess round trip before the phone can assemble
   // the first sentence. Older clients simply ignore the optional field.
   session.first_chunk=localStorage.getItem(sessionKey(session.session_id)+'_0');
+  session.first_chunk_checksum=wavChecksum(wav.subarray(0,Math.min(wav.length,TTS_CHUNK_BYTES)));
   session.audio_diagnostics={source:source,output:pcmStats(pcm)};
   return {ok:true,data:session};
 }
@@ -525,6 +531,7 @@ function ttsChunk(args){
   meta.expires=Date.now()+TTS_TTL_MS;
   localStorage.setItem(sessionKey(id),JSON.stringify(meta));
   return {ok:true,data:{offset:offset,length:meta.length,audio:audio,
+    checksum:meta.hashes&&meta.hashes[index],
     done:index===meta.count-1}};
 }
 var SAFE_READ=/^\/api\/(?:config|services|states(?:\/[a-z][a-z0-9_]*\.[a-z0-9_]+)?|calendars|history\/period(?:\/[0-9TZ:+.-]+)?|logbook(?:\/[0-9TZ:+.-]+)?)(?:\?[a-zA-Z0-9_=&%.,:+-]+)?$/;
