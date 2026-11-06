@@ -9,9 +9,9 @@ var DEFAULT_PLUGIN_ID='a74370b6-929c-4ec0-b7ee-2fc6fca8db57';
 module.exports={
   create:function(options){
     options=options||{};
-    var Pebble=options.Pebble||global.Pebble;
-    var localStorage=options.storage||global.localStorage;
-    if(!Pebble||typeof Pebble.invokeAction!=='function')
+    var Pebble=options.Pebble;
+    var localStorage=options.storage;
+    if(!Pebble||!localStorage||typeof Pebble.invokeAction!=='function')
       throw Error('Pebble plugin invokeAction is required');
     var HA_PLUGIN_UUID=options.pluginId||DEFAULT_PLUGIN_ID;
     var PCM_DEBUG_STORAGE_KEY=options.diagnosticsKey||'HA_AUDIO_LIBRARY_DIAG_V1';
