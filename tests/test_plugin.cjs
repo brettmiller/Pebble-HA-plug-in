@@ -160,6 +160,11 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert(meta.audio_diagnostics.byte_order.little_endian.rms>0);
   assert(meta.audio_diagnostics.byte_order.big_endian.rms>0);
   assert.strictEqual(meta.audio_diagnostics.source,'home_assistant');
+  assert(meta.audio_diagnostics.stage_ms,'Per-stage bridge timing missing');
+  for(const name of ['ha_generation','binary_download','wav_parse','resample','session_storage','total_bridge']){
+    assert(Number.isFinite(meta.audio_diagnostics.stage_ms[name]),'Invalid stage timing '+name);
+    assert(meta.audio_diagnostics.stage_ms[name]>=0,'Negative stage time '+name);
+  }
   assert.strictEqual(meta.audio_diagnostics.binary_transport,'fetch_arraybuffer');
   // Pebble starts a fresh plugin JS context for every action.
   vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
