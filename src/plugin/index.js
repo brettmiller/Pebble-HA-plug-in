@@ -305,47 +305,28 @@ function resample8k(samples,rate) {
   }
   return out;
 }
-// Standard IMA ADPCM, high nibble first, no per-chunk reset. The caller passes
-// predictor/index from the previous sentence, keeping decoder state continuous.
-var IMA_STEPS=[7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,
-  41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,
-  253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,
-  1166,1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,3327,3660,
-  4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,
-  12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767];
-var IMA_INDEX=[-1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8];
-function encodeIma(samples,predictor,index) {
-  var output=new Uint8Array(Math.ceil(samples.length/2)),p=predictor,idx=index;
-  for(var i=0;i<samples.length;i++) {
-    var diff=samples[i]-p,sign=diff<0?8:0;
-    if(sign)diff=-diff;
-    var step=IMA_STEPS[idx],bit=0,vpdiff=step>>3;
-    if(diff>=step){bit|=4;diff-=step;vpdiff+=step;}
-    if(diff>=(step>>1)){bit|=2;diff-=(step>>1);vpdiff+=step>>1;}
-    if(diff>=(step>>2)){bit|=1;vpdiff+=step>>2;}
-    var code=bit|sign;
-    p+=sign?-vpdiff:vpdiff;
-    p=Math.max(-32768,Math.min(32767,p));
-    idx=Math.max(0,Math.min(88,idx+IMA_INDEX[code]));
-    if((i&1)===0)output[i>>1]=code<<4;
-    else output[i>>1]|=code;
-  }
-  return {bytes:output,predictor:p,index:idx};
+// Gemini consumes a canonical 44-byte WAV header followed by signed,
+// little-endian 8kHz mono PCM16 samples. Keep ADPCM encoding in the phone app.
+function geminiWav8k(samples) {
+  var out=new Uint8Array(44+samples.length*2),v=new DataView(out.buffer);
+  function tag(p,t){for(var i=0;i<t.length;i++)out[p+i]=t.charCodeAt(i);}
+  tag(0,'RIFF');v.setUint32(4,out.length-8,true);tag(8,'WAVE');
+  tag(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);
+  v.setUint16(22,1,true);v.setUint32(24,8000,true);
+  v.setUint32(28,16000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);
+  tag(36,'data');v.setUint32(40,samples.length*2,true);
+  for(var i=0;i<samples.length;i++)v.setInt16(44+i*2,samples[i],true);
+  return out;
 }
 async function prepareTts(args){
   if(typeof args.text!=='string'||!args.text.trim()||args.text.length>500)
     return failure('INVALID_ARGS','Speech text must contain 1–500 characters');
   var engine=String(args.engine_id||voiceDefaults().tts_engine||'');
-  var predictor=args.predictor===undefined?0:args.predictor;
-  var index=args.index===undefined?0:args.index;
-  if(!Number.isInteger(predictor)||predictor< -32768||predictor>32767||
-     !Number.isInteger(index)||index<0||index>88)
-    return failure('INVALID_ARGS','Invalid IMA ADPCM predictor or step index');
   if(!/^tts\.[a-z0-9_]+$/.test(engine))
     return failure('INVALID_ARGS','Select a TTS engine in Home Assistant Bridge settings');
   var generated=await api('/api/tts_get_url','POST',{
     engine_id:engine,message:args.text,cache:true,
-    options:{preferred_format:'wav',preferred_sample_rate:16000,
+    options:{preferred_format:'wav',preferred_sample_rate:8000,
       preferred_sample_channels:1,preferred_sample_bytes:2}
   });
   if(!generated.ok)return generated;
@@ -362,21 +343,16 @@ async function prepareTts(args){
     var parsed=wavPcm16(bytes);
     if(!parsed.ok)return failure('PLUGIN_UNAVAILABLE',parsed.error);
     var pcm=resample8k(parsed.samples,parsed.rate);
-    // A full ADPCM byte represents two samples. Pad odd-length speech with
-    // its final sample so consecutive sentences retain matching codec state.
-    if(pcm.length&1) {
-      var even=new Int16Array(pcm.length+1);
-      even.set(pcm);even[pcm.length]=pcm[pcm.length-1];pcm=even;
-    }
-    var compressed=encodeIma(pcm,predictor,index);
-    var session=storeTtsSession(compressed.bytes);
+    var wav=geminiWav8k(pcm);
+    if(wav.length>MAX_TTS_BYTES)
+      return failure('PLUGIN_UNAVAILABLE','TTS PCM audio exceeds size limit');
+    var session=storeTtsSession(wav);
     if(!session)return failure('PLUGIN_UNAVAILABLE','Insufficient plugin storage for TTS audio');
-    session.format='ima_adpcm4';
+    session.format='pcm_s16le_wav';
     session.sample_rate=8000;
     session.channels=1;
+    session.bits_per_sample=16;
     session.sample_count=pcm.length;
-    session.next_predictor=compressed.predictor;
-    session.next_index=compressed.index;
     return {ok:true,data:session};
   }catch(e){return failure('PLUGIN_UNAVAILABLE','Unable to fetch Home Assistant speech audio');}
 }
