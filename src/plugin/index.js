@@ -468,10 +468,13 @@ async function prepareTts(args){
     // Prefer that transport if the plugin host exposes it, then fall back
     // to fetch for other plugin runtimes and document any corruption.
     var bytes=null,binaryTransport='';
+    stage='check XHR support';
     if(typeof XMLHttpRequest==='function') {
       try {
+        stage='XHR audio request';
         bytes=await fetchTtsXhr(path,token);
         binaryTransport='xhr_arraybuffer';
+        stage='validate XHR binary';
         if(looksLikeMangledBinary(bytes))bytes=null;
       }catch(e){
         xhrProblem='xhr_'+String(e&&e.name||'error').slice(0,35);
@@ -515,8 +518,14 @@ async function prepareTts(args){
     return result;
   }catch(e){
     var reason=e&&e.name?String(e.name).slice(0,40):'exception';
+    var details=e&&e.message?String(e.message):'';
+    // Never surface credentials, complete URLs, access tokens or paths.
+    details=details.replace(/https?:\\/\\/\\S+/gi,'[address]')
+      .replace(/Bearer\\s+\\S+/gi,'[authorization]')
+      .replace(/[A-Za-z0-9_-]{60,}/g,'[redacted]')
+      .slice(0,100);
     return failure('PLUGIN_UNAVAILABLE','TTS '+stage+' failed ('+reason+
-      (xhrProblem?', '+xhrProblem:'')+').');
+      (xhrProblem?', '+xhrProblem:'')+')'+(details?': '+details:''));
   }
 }
 function ttsChunk(args){
