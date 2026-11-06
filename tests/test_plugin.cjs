@@ -198,30 +198,16 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   damaged.writeUInt32LE(0xFDFDFDFD,40);
   assert.strictEqual(isMangled(new Uint8Array(damaged)),true);
   assert.strictEqual(isMangled(new Uint8Array(wav)),false);
-  // XHR is an alternative *inside the plugin*, not a phone app bypass.
-  const xhrWav=Buffer.from(wav);
-  context.XMLHttpRequest=class {
-    open(method,url,async){
-      assert.strictEqual(method,'GET');
-      assert(url.endsWith('/api/tts_proxy/demo.wav'));
-      assert.strictEqual(async,true);
-    }
-    setRequestHeader(name,value){
-      assert.strictEqual(name,'Authorization');
-      assert.strictEqual(value,'Bearer secret');
-    }
-    send(){
-      this.status=200;
-      const bytes=Uint8Array.from(xhrWav);
-      this.response=bytes.buffer;
-      this.onload();
-    }
-  };
-  const getXhr=vm.runInNewContext('fetchTtsXhr',context);
-  const xhrResult=await getXhr('/api/tts_proxy/demo.wav','secret');
-  assert.strictEqual(isMangled(xhrResult),false);
-  assert.strictEqual(xhrResult.byteLength,wav.length);
-
+  // Access to XMLHttpRequest is explicitly blocked in plugin contexts.
+  // No plugin code should even evaluate typeof XMLHttpRequest.
+  Object.defineProperty(context,'XMLHttpRequest',{
+    configurable:true,
+    get(){throw Error('XMLHttpRequest is not available to plugins');}
+  });
+  vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
+  const stillWorks=await callAction('tts_prepare',{text:'Testing safe plugin fetch'});
+  assert(stillWorks.ok,'Plugin fetch must work even with throwing XHR global');
+  await callAction('tts_release',{session_id:JSON.parse(stillWorks.text).session_id});
   // WAV may have metadata after its finite data chunk. Do not interpret
   // those trailing chunks as speech; doing so creates audible noise.
   const withTrailer=Buffer.alloc(wav.length+20);
