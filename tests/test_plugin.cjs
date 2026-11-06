@@ -123,7 +123,7 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   let reference=await callAction('tts_prepare',{test_tone:true});
   assert(reference.ok,'Bridge diagnostic must not require a TTS provider');
   let refMeta=JSON.parse(reference.text);
-  assert.strictEqual(refMeta.length,32044);
+  assert.strictEqual(refMeta.length,112044);
   assert.strictEqual(refMeta.sample_rate,8000);
   assert.strictEqual(refMeta.audio_diagnostics.source,'bridge_test_tone');
   let refParts=[];
