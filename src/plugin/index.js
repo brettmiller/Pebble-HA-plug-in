@@ -395,6 +395,51 @@ function packageWavSession(pcm,source) {
   session.audio_diagnostics={source:source,output:pcmStats(pcm)};
   return {ok:true,data:session};
 }
+// Binary WAV transport probe. A streaming WAV commonly contains an all-FF
+// unknown-length marker; if it turns into all-FD, its bytes were altered in
+// transport. The same corruption changes 0x3E80 (16000 Hz) to 0x3EFD.
+function looksLikeMangledBinary(bytes) {
+  if(bytes.length<44)return false;
+  var view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  var pos=12,found=false;
+  while(pos+8<=Math.min(bytes.length,4096)){
+    var tag=String.fromCharCode(bytes[pos],bytes[pos+1],bytes[pos+2],bytes[pos+3]);
+    var length=view.getUint32(pos+4,true);
+    if(tag==='data') {
+      found=true;
+      if(length===0xFDFDFDFD)return true;
+      break;
+    }
+    if(length>bytes.length-pos-8)break;
+    pos+=8+length+(length&1);
+  }
+  return false;
+}
+// In a plugin host that damaged fetch().arrayBuffer(), try the same
+// binary XHR API known to work in PebbleKit JS. The request remains inside
+// the bridge, retaining its own credential and permission boundaries.
+function fetchTtsXhr(path,token) {
+  return new Promise(function(resolve,reject){
+    if(typeof XMLHttpRequest!=='function'){
+      reject(Error('Binary XMLHttpRequest unavailable in plugin runtime'));return;
+    }
+    var xhr=new XMLHttpRequest();
+    try {
+      xhr.open('GET',baseUrl()+path,true);
+      xhr.responseType='arraybuffer';
+      xhr.timeout=30000;
+      xhr.setRequestHeader('Authorization','Bearer '+token);
+      xhr.onload=function(){
+        if(xhr.status!==200){reject(Error('TTS audio HTTP '+xhr.status));return;}
+        if(!xhr.response){reject(Error('Empty binary TTS response'));return;}
+        resolve(new Uint8Array(xhr.response));
+      };
+      xhr.onerror=function(){reject(Error('Binary TTS network request failed'));};
+      xhr.ontimeout=function(){reject(Error('Binary TTS request timed out'));};
+      xhr.send();
+    }catch(e){reject(e);}
+  });
+}
 async function prepareTts(args){
   if(args.test_tone===true)return packageWavSession(bridgeTestTone(),'bridge_test_tone');
   if(typeof args.text!=='string'||!args.text.trim()||args.text.length>500)
@@ -420,6 +465,21 @@ async function prepareTts(args){
     var res=await fetch(baseUrl()+path,{headers:{Authorization:'Bearer '+token}});
     if(!res.ok)return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status);
     var bytes=new Uint8Array(await res.arrayBuffer());
+    var binaryTransport='fetch_arraybuffer';
+    if(looksLikeMangledBinary(bytes)){
+      // Do not synthesize static out of byte-corrupted source samples.
+      try {
+        bytes=await fetchTtsXhr(path,token);
+        binaryTransport='xhr_arraybuffer';
+      } catch(e) {
+        return failure('PLUGIN_UNAVAILABLE',
+          'Bridge binary HTTP response is corrupted (FF bytes became FD). '+
+          'The Pebble plugin runtime did not provide a working binary XHR alternative.');
+      }
+      if(looksLikeMangledBinary(bytes))
+        return failure('PLUGIN_UNAVAILABLE',
+          'Both bridge binary HTTP download methods returned corrupt WAV bytes');
+    }
     if(bytes.length<44||bytes.length>MAX_TTS_BYTES)
       return failure('PLUGIN_UNAVAILABLE','TTS audio is empty or exceeds size limit');
     var parsed=wavPcm16(bytes);
@@ -427,6 +487,8 @@ async function prepareTts(args){
     var pcm=resample8k(parsed.samples,parsed.rate);
     var result=packageWavSession(pcm,'home_assistant');
     if(result.ok) {
+      result.data.audio_diagnostics.engine_id=engine;
+      result.data.audio_diagnostics.binary_transport=binaryTransport;
       result.data.audio_diagnostics.input_rate=parsed.rate;
       result.data.audio_diagnostics.requested_rate=sourceRate;
       result.data.audio_diagnostics.input=pcmStats(parsed.samples,parsed.rate);
