@@ -140,6 +140,9 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   }
   const wav=Buffer.concat(audio);
   assert.strictEqual(wav.length,meta.length);
+  let check=2166136261>>>0;
+  for(const byte of wav)check=Math.imul((check^byte)>>>0,16777619)>>>0;
+  assert.strictEqual(meta.wav_checksum,check,'WAV checksum must cover every transmitted byte');
   assert.strictEqual(wav.toString('ascii',0,4),'RIFF');
   assert.strictEqual(wav.toString('ascii',8,12),'WAVE');
   assert.strictEqual(wav.toString('ascii',12,16),'fmt ');
