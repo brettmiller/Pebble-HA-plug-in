@@ -275,7 +275,7 @@ function wavPcm16(bytes) {
   // Home Assistant streamed WAV may use unknown (0xFFFFFFFF/0x7FFFFFFF)
   // or overstated sizes, so in those cases use available complete frames.
   var available=bytes.length-start;
-  var streamed=declaredSize===0||declaredSize===0xFFFFFFFF||declaredSize===0x7FFFFFFF;
+  var streamed=declaredSize===0||declaredSize===0xFFFFFFFF||declaredSize===0x7FFFFFFF||declaredSize===0xFDFDFDFD;
   var usable=(streamed||declaredSize>available)?
     available:Math.min(available,declaredSize);
   usable-=usable%2;
@@ -284,6 +284,7 @@ function wavPcm16(bytes) {
   var samples=new Int16Array(length);
   for(var i=0;i<length;i++)samples[i]=view.getInt16(start+i*2,true);
   return {ok:true,samples:samples,rate:fmt.rate,
+    byte_order_analysis:inspectPcmByteOrder(bytes,start,length),
     declared_data_bytes:declaredSize,available_data_bytes:available,
     used_data_bytes:usable,streamed_data:streamed};
 }
@@ -350,6 +351,29 @@ function pcmStats(samples,rate) {
     zero_crossings:zeroCrossings,clipped:clipped,
     duration_ms:Math.round(samples.length*1000/(rate||8000))};
 }
+// The bridge already knows the real WAV bytes. Compare both PCM16 byte
+// interpretations without changing the actual playback signal. Misread
+// endianness has dramatically different adjacent-sample roughness.
+function inspectPcmByteOrder(bytes,offset,count) {
+  var view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  var leDiff=0,beDiff=0,lePower=0,bePower=0,leCross=0,beCross=0;
+  var lastLE=0,lastBE=0,n=Math.min(count,24000);
+  for(var i=0;i<n;i++) {
+    var le=view.getInt16(offset+2*i,true),be=view.getInt16(offset+2*i,false);
+    lePower+=le*le;bePower+=be*be;
+    if(i) {
+      leDiff+=Math.abs(le-lastLE);beDiff+=Math.abs(be-lastBE);
+      if((le<0)!==(lastLE<0))leCross++;
+      if((be<0)!==(lastBE<0))beCross++;
+    }
+    lastLE=le;lastBE=be;
+  }
+  return {examined_samples:n,
+    little_endian:{mean_step:Math.round(leDiff/Math.max(1,n-1)),
+      rms:Math.round(Math.sqrt(lePower/Math.max(1,n))),crossings:leCross},
+    big_endian:{mean_step:Math.round(beDiff/Math.max(1,n-1)),
+      rms:Math.round(Math.sqrt(bePower/Math.max(1,n))),crossings:beCross}};
+}
 function bridgeTestTone() {
   var samples=new Int16Array(8000*7);
   for(var i=0;i<samples.length;i++)
@@ -406,6 +430,7 @@ async function prepareTts(args){
       result.data.audio_diagnostics.input_rate=parsed.rate;
       result.data.audio_diagnostics.requested_rate=sourceRate;
       result.data.audio_diagnostics.input=pcmStats(parsed.samples,parsed.rate);
+      result.data.audio_diagnostics.byte_order=parsed.byte_order_analysis;
       result.data.audio_diagnostics.declared_data_bytes=parsed.declared_data_bytes;
       result.data.audio_diagnostics.available_data_bytes=parsed.available_data_bytes;
       result.data.audio_diagnostics.used_data_bytes=parsed.used_data_bytes;
