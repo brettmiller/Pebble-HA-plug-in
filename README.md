@@ -1,4 +1,4 @@
-# Home Assistant Bridge — Pebble Plugin Preview
+# Home Assistant Bridge v1.0.0 — Pebble Plugin
 
 ## Developer audio integration
 
@@ -13,6 +13,14 @@ The **[SDK guide](sdk/README.md)** has the exact `require()`, `#include`, messag
 
 
 Standalone, phone-side Pebble plugin for reusable access to a user's Home Assistant installation.
+
+## Stable 1.0.0 download
+
+**[Download Home Assistant Bridge v1.0.0 (.pbw)](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases/download/v1.0.0/home-assistant-bridge-v1.0.0.pbw)**
+
+This is the stable plugin build. The [Home Assistant AI v1.0.0 watch app](https://github.com/ericlmccormick/Pebble-Home-Assistant-AI/releases/download/v1.0.0/home-assistant-ai-v1.0.0.pbw) depends on it. Install and configure the Bridge first; then install the watch app and grant plugin permissions.
+
+The [reusable audio SDK](sdk/README.md) provides portable PebbleKit JavaScript and watch C playback sources for other developers.
 
 ## Install
 
