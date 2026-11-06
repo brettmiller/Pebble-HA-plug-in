@@ -441,36 +441,61 @@ async function prepareTts(args){
   var sourceRate=args.source_rate===16000?16000:8000;
   var diagnostic=args.diagnostic===true;
   var timingStart=Date.now();
-  var generated=await api('/api/tts_get_url','POST',{
-    engine_id:engine,message:args.text,cache:!diagnostic,
-    options:{preferred_format:'wav',preferred_sample_rate:sourceRate,
-      preferred_sample_channels:1,preferred_sample_bytes:2}
-  });
-  var generatedAt=Date.now();
-  if(!generated.ok)return generated;
-  var path=generated.data&&generated.data.path;
-  if(typeof path!=='string'||!/^\/api\/tts_proxy\/[a-zA-Z0-9_./%-]+$/.test(path))
-    return failure('PLUGIN_UNAVAILABLE','Home Assistant did not return a valid TTS path');
   var token=await Pebble.secureStorage.getItem(TOKEN_KEY);
-  var stage='start';
-  try {
-    // Pebble plugins expose fetch(), but the XMLHttpRequest global is a
-    // throwing accessors: even typeof XMLHttpRequest raises an Error.
-    // Never access it. Binary integrity must be checked on the fetch result.
-    stage='fetch HTTP';
-    // Pebble plugin fetch is not standard browser fetch. Its host only
-    // preserves binary bytes when responseType is set ON THE REQUEST.
-    // Calling response.arrayBuffer() without this option re-encodes UTF-8
-    // replacement characters and produces the 0xFDFDFDFD / static symptom.
-    var res=await fetch(baseUrl()+path,{
-      headers:{Authorization:'Bearer '+token},
-      responseType:'arraybuffer'
+  var stage='start',generatedAt=0,downloadedAt=0;
+  var bytes=null,binaryTransport='fetch_arraybuffer';
+  // HA can transiently return HTTP 500 for a TTS proxy URL during
+  // multi-sentence preparation. Regenerate the URL with cache disabled
+  // rather than downloading the same (possibly stale) path repeatedly.
+  function retryableStatus(code){
+    return code===429||code===500||code===502||code===503||code===504;
+  }
+  for(var attempt=0;attempt<3;attempt++){
+    stage='request TTS URL';
+    var generated=await api('/api/tts_get_url','POST',{
+      engine_id:engine,message:args.text,cache:attempt===0&&!diagnostic,
+      options:{preferred_format:'wav',preferred_sample_rate:sourceRate,
+        preferred_sample_channels:1,preferred_sample_bytes:2}
     });
-    if(!res.ok)return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status);
-    stage='fetch arrayBuffer';
-    var bytes=new Uint8Array(await res.arrayBuffer());
-    var binaryTransport='fetch_arraybuffer';
-    var downloadedAt=Date.now();
+    generatedAt=Date.now();
+    if(!generated.ok){
+      if(attempt<2 && /HTTP (429|500|502|503|504)(?:\b|$)/.test(generated.message||'')){
+        await new Promise(function(resolve){setTimeout(resolve,200*(attempt+1));});
+        continue;
+      }
+      return generated;
+    }
+    var path=generated.data&&generated.data.path;
+    if(typeof path!=='string'||!/^\/api\/tts_proxy\/[a-zA-Z0-9_./%-]+$/.test(path))
+      return failure('PLUGIN_UNAVAILABLE','Home Assistant did not return a valid TTS path');
+    stage='fetch HTTP';
+    try {
+      // Pebble plugin fetch must request binary responseType ON the request.
+      var res=await fetch(baseUrl()+path,{
+        headers:{Authorization:'Bearer '+token},
+        responseType:'arraybuffer'
+      });
+      if(!res.ok){
+        if(attempt<2 && retryableStatus(res.status)){
+          await new Promise(function(resolve){setTimeout(resolve,200*(attempt+1));});
+          continue;
+        }
+        return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status);
+      }
+      stage='fetch arrayBuffer';
+      bytes=new Uint8Array(await res.arrayBuffer());
+      downloadedAt=Date.now();
+      break;
+    }catch(e){
+      if(attempt<2){
+        await new Promise(function(resolve){setTimeout(resolve,200*(attempt+1));});
+        continue;
+      }
+      return failure('PLUGIN_UNAVAILABLE','TTS audio connection failed after retries');
+    }
+  }
+  if(!bytes)return failure('PLUGIN_UNAVAILABLE','TTS audio unavailable after retries');
+  try {
     if(looksLikeMangledBinary(bytes))
       return failure('PLUGIN_UNAVAILABLE',
         'Plugin fetch returned an altered WAV header (0xFDFDFDFD). '+
