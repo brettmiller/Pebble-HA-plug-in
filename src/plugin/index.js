@@ -392,6 +392,10 @@ function packageWavSession(pcm,source) {
   session.bits_per_sample=16;
   session.sample_count=pcm.length;
   session.wav_checksum=wavChecksum(wav);
+  // Return the first already-stored chunk with prepare. This avoids another
+  // plugin startup / interprocess round trip before the phone can assemble
+  // the first sentence. Older clients simply ignore the optional field.
+  session.first_chunk=localStorage.getItem(sessionKey(session.session_id)+'_0');
   session.audio_diagnostics={source:source,output:pcmStats(pcm)};
   return {ok:true,data:session};
 }
