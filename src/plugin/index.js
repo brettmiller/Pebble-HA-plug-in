@@ -318,6 +318,15 @@ function geminiWav8k(samples) {
   for(var i=0;i<samples.length;i++)v.setInt16(44+i*2,samples[i],true);
   return out;
 }
+// Match the phone-side checksum before ADPCM encoding; a corrupt or missing
+// base64 chunk must fail instead of being decoded as audible static.
+function wavChecksum(bytes) {
+  var hash=2166136261>>>0;
+  for(var i=0;i<bytes.length;i++) {
+    hash=Math.imul((hash^bytes[i])>>>0,16777619)>>>0;
+  }
+  return hash>>>0;
+}
 async function prepareTts(args){
   if(typeof args.text!=='string'||!args.text.trim()||args.text.length>500)
     return failure('INVALID_ARGS','Speech text must contain 1–500 characters');
@@ -353,6 +362,7 @@ async function prepareTts(args){
     session.channels=1;
     session.bits_per_sample=16;
     session.sample_count=pcm.length;
+    session.wav_checksum=wavChecksum(wav);
     return {ok:true,data:session};
   }catch(e){return failure('PLUGIN_UNAVAILABLE','Unable to fetch Home Assistant speech audio');}
 }
