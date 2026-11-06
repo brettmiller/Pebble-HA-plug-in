@@ -520,8 +520,8 @@ async function prepareTts(args){
     var reason=e&&e.name?String(e.name).slice(0,40):'exception';
     var details=e&&e.message?String(e.message):'';
     // Never surface credentials, complete URLs, access tokens or paths.
-    details=details.replace(/https?:\\/\\/\\S+/gi,'[address]')
-      .replace(/Bearer\\s+\\S+/gi,'[authorization]')
+    details=details.replace(/https?:\/\/\S+/gi,'[address]')
+      .replace(/Bearer\s+\S+/gi,'[authorization]')
       .replace(/[A-Za-z0-9_-]{60,}/g,'[redacted]')
       .slice(0,100);
     return failure('PLUGIN_UNAVAILABLE','TTS '+stage+' failed ('+reason+
