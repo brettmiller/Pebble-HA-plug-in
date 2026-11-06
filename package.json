@@ -1,7 +1,7 @@
 {
   "name": "pebble-home-assistant-plugin",
   "author": "Eric McCormick",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "pebble": {
     "displayName": "Home Assistant Bridge",
     "uuid": "a74370b6-929c-4ec0-b7ee-2fc6fca8db57",
@@ -185,7 +185,7 @@
         },
         {
           "name": "tts_prepare",
-          "description": "Synthesize mono 16 kHz PCM16 with Home Assistant, encode 4-bit IMA ADPCM; returns a temporary compressed audio session, format metadata, and continuation predictor/index.",
+          "description": "Request 16kHz mono PCM16 speech from Home Assistant, low-pass/resample to 8kHz, then encode 4-bit IMA ADPCM for Pebble 8kHz playback. Carries predictor/index state across sentences.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -217,7 +217,7 @@
         },
         {
           "name": "tts_chunk",
-          "description": "Retrieve bounded base64-encoded 16 kHz 4-bit IMA ADPCM audio bytes from a temporary session.",
+          "description": "Retrieve 8kHz 4-bit IMA ADPCM audio bytes, base64 encoded, from a temporary session.",
           "parameters": {
             "type": "object",
             "properties": {
