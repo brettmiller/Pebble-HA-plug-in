@@ -190,6 +190,38 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   new DataView(unsupported.buffer).setUint16(20,3,true);
   const parse=vm.runInNewContext('wavPcm16',context);
   assert.strictEqual(parse(unsupported).ok,false);
+  // The captured broken HTTP response had 0xFDFDFDFD where streaming WAV
+  // uses an indefinite data size, and 0x3EFD where 16kHz is 0x3E80.
+  // Detect this as binary corruption, not a new valid streaming marker.
+  const isMangled=vm.runInNewContext('looksLikeMangledBinary',context);
+  const damaged=Buffer.from(wav);
+  damaged.writeUInt32LE(0xFDFDFDFD,40);
+  assert.strictEqual(isMangled(new Uint8Array(damaged)),true);
+  assert.strictEqual(isMangled(new Uint8Array(wav)),false);
+  // XHR is an alternative *inside the plugin*, not a phone app bypass.
+  const xhrWav=Buffer.from(wav);
+  context.XMLHttpRequest=class {
+    open(method,url,async){
+      assert.strictEqual(method,'GET');
+      assert(url.endsWith('/api/tts_proxy/demo.wav'));
+      assert.strictEqual(async,true);
+    }
+    setRequestHeader(name,value){
+      assert.strictEqual(name,'Authorization');
+      assert.strictEqual(value,'Bearer secret');
+    }
+    send(){
+      this.status=200;
+      const bytes=Uint8Array.from(xhrWav);
+      this.response=bytes.buffer;
+      this.onload();
+    }
+  };
+  const getXhr=vm.runInNewContext('fetchTtsXhr',context);
+  const xhrResult=await getXhr('/api/tts_proxy/demo.wav','secret');
+  assert.strictEqual(isMangled(xhrResult),false);
+  assert.strictEqual(xhrResult.byteLength,wav.length);
+
   // WAV may have metadata after its finite data chunk. Do not interpret
   // those trailing chunks as speech; doing so creates audible noise.
   const withTrailer=Buffer.alloc(wav.length+20);
