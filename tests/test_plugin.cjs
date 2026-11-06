@@ -128,13 +128,25 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert.strictEqual(refMeta.length,112044);
   assert.strictEqual(refMeta.sample_rate,8000);
   assert.strictEqual(Buffer.from(refMeta.first_chunk,'base64').length,6000);
+  let firstHash=2166136261>>>0;
+  for(const byte of Buffer.from(refMeta.first_chunk,'base64'))
+    firstHash=Math.imul((firstHash^byte)>>>0,16777619)>>>0;
+  assert.strictEqual(refMeta.first_chunk_checksum,firstHash,
+    'The first streaming chunk must be authenticated before playback');
   assert.strictEqual(refMeta.audio_diagnostics.source,'bridge_test_tone');
   let refParts=[];
   for(let off=0;off<refMeta.length;off+=refMeta.chunk_bytes){
     vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
     const part=await callAction('tts_chunk',{session_id:refMeta.session_id,offset:off});
     assert(part.ok,'Bridge tone chunk '+off);
-    refParts.push(Buffer.from(JSON.parse(part.text).audio,'base64'));
+    const chunk=JSON.parse(part.text);
+    const chunkBytes=Buffer.from(chunk.audio,'base64');
+    let chunkHash=2166136261>>>0;
+    for(const byte of chunkBytes)
+      chunkHash=Math.imul((chunkHash^byte)>>>0,16777619)>>>0;
+    assert.strictEqual(chunk.checksum,chunkHash,
+      'Every streaming chunk must carry an independent checksum');
+    refParts.push(chunkBytes);
   }
   const refWave=Buffer.concat(refParts);
   let refHash=2166136261>>>0;
@@ -174,7 +186,12 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
     assert(reply.ok,'Chunk '+offset+' should be readable');
     const payload=JSON.parse(reply.text);
     assert.strictEqual(payload.offset,offset);
-    audio.push(Buffer.from(payload.audio,'base64'));
+    const chunkBytes=Buffer.from(payload.audio,'base64');
+    let chunkHash=2166136261>>>0;
+    for(const byte of chunkBytes)
+      chunkHash=Math.imul((chunkHash^byte)>>>0,16777619)>>>0;
+    assert.strictEqual(payload.checksum,chunkHash);
+    audio.push(chunkBytes);
     vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
   }
   const wav=Buffer.concat(audio);
