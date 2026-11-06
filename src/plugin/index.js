@@ -327,7 +327,43 @@ function wavChecksum(bytes) {
   }
   return hash>>>0;
 }
+function pcmStats(samples) {
+  var peak=0,power=0,zeroCrossings=0,clipped=0,prev=0;
+  for(var i=0;i<samples.length;i++){
+    var value=samples[i];
+    peak=Math.max(peak,Math.abs(value));
+    power+=value*value;
+    if(i&&((value<0)!==(prev<0)))zeroCrossings++;
+    if(Math.abs(value)>=32760)clipped++;
+    prev=value;
+  }
+  return {peak:peak,rms:Math.round(Math.sqrt(power/Math.max(1,samples.length))),
+    zero_crossings:zeroCrossings,clipped:clipped,
+    duration_ms:Math.round(samples.length/8)};
+}
+function bridgeTestTone() {
+  var samples=new Int16Array(8000*2);
+  for(var i=0;i<samples.length;i++)
+    samples[i]=Math.round(9000*Math.sin(2*Math.PI*440*i/8000));
+  return samples;
+}
+function packageWavSession(pcm,source) {
+  var wav=geminiWav8k(pcm);
+  if(wav.length>MAX_TTS_BYTES)
+    return failure('PLUGIN_UNAVAILABLE','TTS PCM audio exceeds size limit');
+  var session=storeTtsSession(wav);
+  if(!session)return failure('PLUGIN_UNAVAILABLE','Insufficient plugin storage for TTS audio');
+  session.format='pcm_s16le_wav';
+  session.sample_rate=8000;
+  session.channels=1;
+  session.bits_per_sample=16;
+  session.sample_count=pcm.length;
+  session.wav_checksum=wavChecksum(wav);
+  session.audio_diagnostics={source:source,output:pcmStats(pcm)};
+  return {ok:true,data:session};
+}
 async function prepareTts(args){
+  if(args.test_tone===true)return packageWavSession(bridgeTestTone(),'bridge_test_tone');
   if(typeof args.text!=='string'||!args.text.trim()||args.text.length>500)
     return failure('INVALID_ARGS','Speech text must contain 1–500 characters');
   var engine=String(args.engine_id||voiceDefaults().tts_engine||'');
@@ -352,18 +388,12 @@ async function prepareTts(args){
     var parsed=wavPcm16(bytes);
     if(!parsed.ok)return failure('PLUGIN_UNAVAILABLE',parsed.error);
     var pcm=resample8k(parsed.samples,parsed.rate);
-    var wav=geminiWav8k(pcm);
-    if(wav.length>MAX_TTS_BYTES)
-      return failure('PLUGIN_UNAVAILABLE','TTS PCM audio exceeds size limit');
-    var session=storeTtsSession(wav);
-    if(!session)return failure('PLUGIN_UNAVAILABLE','Insufficient plugin storage for TTS audio');
-    session.format='pcm_s16le_wav';
-    session.sample_rate=8000;
-    session.channels=1;
-    session.bits_per_sample=16;
-    session.sample_count=pcm.length;
-    session.wav_checksum=wavChecksum(wav);
-    return {ok:true,data:session};
+    var result=packageWavSession(pcm,'home_assistant');
+    if(result.ok) {
+      result.data.audio_diagnostics.input_rate=parsed.rate;
+      result.data.audio_diagnostics.input=pcmStats(parsed.samples);
+    }
+    return result;
   }catch(e){return failure('PLUGIN_UNAVAILABLE','Unable to fetch Home Assistant speech audio');}
 }
 function ttsChunk(args){
