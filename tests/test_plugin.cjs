@@ -127,6 +127,7 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   let refMeta=JSON.parse(reference.text);
   assert.strictEqual(refMeta.length,112044);
   assert.strictEqual(refMeta.sample_rate,8000);
+  assert.strictEqual(Buffer.from(refMeta.first_chunk,'base64').length,6000);
   assert.strictEqual(refMeta.audio_diagnostics.source,'bridge_test_tone');
   let refParts=[];
   for(let off=0;off<refMeta.length;off+=refMeta.chunk_bytes){
@@ -150,6 +151,9 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert.strictEqual(meta.bits_per_sample,16);
   assert.strictEqual(meta.sample_count,8000);
   assert.strictEqual(meta.length,16044);
+  assert.strictEqual(typeof meta.first_chunk,'string');
+  assert.strictEqual(Buffer.from(meta.first_chunk,'base64').length,6000,
+    'Prepare must inline its first already persisted audio chunk');
   assert.strictEqual(meta.audio_diagnostics.input_rate,16000);
   assert(meta.audio_diagnostics.byte_order);
   assert(meta.audio_diagnostics.byte_order.examined_samples>0);
