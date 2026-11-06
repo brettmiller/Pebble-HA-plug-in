@@ -254,7 +254,7 @@ function wavPcm16(bytes) {
   var view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
   function tag(p){return String.fromCharCode(bytes[p],bytes[p+1],bytes[p+2],bytes[p+3]);}
   if(tag(0)!=='RIFF'||tag(8)!=='WAVE')return {ok:false,error:'TTS did not return RIFF WAV'};
-  var pos=12,fmt=null,start=-1;
+  var pos=12,fmt=null,start=-1,dataLength=0,declaredSize=0;
   while(pos+8<=bytes.length) {
     var size=view.getUint32(pos+4,true),data=pos+8,name=tag(pos);
     if(name==='fmt ') {
@@ -262,7 +262,7 @@ function wavPcm16(bytes) {
       fmt={encoding:view.getUint16(data,true),channels:view.getUint16(data+2,true),
         rate:view.getUint32(data+4,true),bits:view.getUint16(data+14,true)};
     }
-    if(name==='data'){start=data;break;}
+    if(name==='data'){start=data;declaredSize=size;break;}
     if(size>bytes.length-data)return {ok:false,error:'Truncated WAV '+name};
     pos=data+size+(size&1);
   }
@@ -270,13 +270,22 @@ function wavPcm16(bytes) {
   if(fmt.encoding!==1||fmt.channels!==1||fmt.bits!==16||
      fmt.rate<8000||fmt.rate>48000)
     return {ok:false,error:'TTS requires mono PCM16 WAV (8-48 kHz)'};
-  // The HTTP response is complete. Some HA engines publish incorrect finite
-  // or streamed data lengths; consume actual complete sample pairs.
-  var length=Math.floor((bytes.length-start)/2);
+  // Respect a valid finite 'data' chunk length; a WAV can contain trailing
+  // LIST, INFO or metadata chunks. Do not decode those non-audio bytes as PCM.
+  // Home Assistant streamed WAV may use unknown (0xFFFFFFFF/0x7FFFFFFF)
+  // or overstated sizes, so in those cases use available complete frames.
+  var available=bytes.length-start;
+  var streamed=declaredSize===0xFFFFFFFF||declaredSize===0x7FFFFFFF;
+  var usable=(streamed||declaredSize>available)?
+    available:Math.min(available,declaredSize);
+  usable-=usable%2;
+  var length=usable/2;
   if(!length)return {ok:false,error:'Empty WAV audio'};
   var samples=new Int16Array(length);
   for(var i=0;i<length;i++)samples[i]=view.getInt16(start+i*2,true);
-  return {ok:true,samples:samples,rate:fmt.rate};
+  return {ok:true,samples:samples,rate:fmt.rate,
+    declared_data_bytes:declaredSize,available_data_bytes:available,
+    used_data_bytes:usable,streamed_data:streamed};
 }
 // Convert source PCM16 to the native Gemini-compatible 8 kHz playback rate.
 // If HA supplies 16 kHz, use a 31-tap windowed-sinc low-pass FIR *before*
@@ -369,9 +378,13 @@ async function prepareTts(args){
   var engine=String(args.engine_id||voiceDefaults().tts_engine||'');
   if(!/^tts\.[a-z0-9_]+$/.test(engine))
     return failure('INVALID_ARGS','Select a TTS engine in Home Assistant Bridge settings');
+  // Diagnostic override compares native HA 16kHz with the legacy 8kHz
+  // request, with cache disabled to prevent stale audio from masking issues.
+  var sourceRate=args.source_rate===16000?16000:8000;
+  var diagnostic=args.diagnostic===true;
   var generated=await api('/api/tts_get_url','POST',{
-    engine_id:engine,message:args.text,cache:true,
-    options:{preferred_format:'wav',preferred_sample_rate:8000,
+    engine_id:engine,message:args.text,cache:!diagnostic,
+    options:{preferred_format:'wav',preferred_sample_rate:sourceRate,
       preferred_sample_channels:1,preferred_sample_bytes:2}
   });
   if(!generated.ok)return generated;
@@ -391,7 +404,12 @@ async function prepareTts(args){
     var result=packageWavSession(pcm,'home_assistant');
     if(result.ok) {
       result.data.audio_diagnostics.input_rate=parsed.rate;
+      result.data.audio_diagnostics.requested_rate=sourceRate;
       result.data.audio_diagnostics.input=pcmStats(parsed.samples);
+      result.data.audio_diagnostics.declared_data_bytes=parsed.declared_data_bytes;
+      result.data.audio_diagnostics.available_data_bytes=parsed.available_data_bytes;
+      result.data.audio_diagnostics.used_data_bytes=parsed.used_data_bytes;
+      result.data.audio_diagnostics.streamed_data=parsed.streamed_data;
     }
     return result;
   }catch(e){return failure('PLUGIN_UNAVAILABLE','Unable to fetch Home Assistant speech audio');}
