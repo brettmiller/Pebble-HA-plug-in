@@ -462,24 +462,27 @@ async function prepareTts(args){
     return failure('PLUGIN_UNAVAILABLE','Home Assistant did not return a valid TTS path');
   var token=await Pebble.secureStorage.getItem(TOKEN_KEY);
   try {
-    var res=await fetch(baseUrl()+path,{headers:{Authorization:'Bearer '+token}});
-    if(!res.ok)return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status);
-    var bytes=new Uint8Array(await res.arrayBuffer());
-    var binaryTransport='fetch_arraybuffer';
-    if(looksLikeMangledBinary(bytes)){
-      // Do not synthesize static out of byte-corrupted source samples.
+    // The built-in Pebble app receives binary speech correctly via XHR.
+    // Prefer that transport if the plugin host exposes it, then fall back
+    // to fetch for other plugin runtimes and document any corruption.
+    var bytes=null,binaryTransport='';
+    if(typeof XMLHttpRequest==='function') {
       try {
         bytes=await fetchTtsXhr(path,token);
         binaryTransport='xhr_arraybuffer';
-      } catch(e) {
-        return failure('PLUGIN_UNAVAILABLE',
-          'Bridge binary HTTP response is corrupted (FF bytes became FD). '+
-          'The Pebble plugin runtime did not provide a working binary XHR alternative.');
-      }
-      if(looksLikeMangledBinary(bytes))
-        return failure('PLUGIN_UNAVAILABLE',
-          'Both bridge binary HTTP download methods returned corrupt WAV bytes');
+        if(looksLikeMangledBinary(bytes))bytes=null;
+      }catch(e){bytes=null;}
     }
+    if(!bytes){
+      var res=await fetch(baseUrl()+path,{headers:{Authorization:'Bearer '+token}});
+      if(!res.ok)return failure('PLUGIN_UNAVAILABLE','TTS audio HTTP '+res.status);
+      bytes=new Uint8Array(await res.arrayBuffer());
+      binaryTransport='fetch_arraybuffer';
+    }
+    if(looksLikeMangledBinary(bytes))
+      return failure('PLUGIN_UNAVAILABLE',
+        'Bridge binary download corrupted the streamed WAV header (FF became FD). '+
+        'Update Pebble plugin runtime binary HTTP support; refusing static audio.');
     if(bytes.length<44||bytes.length>MAX_TTS_BYTES)
       return failure('PLUGIN_UNAVAILABLE','TTS audio is empty or exceeds size limit');
     var parsed=wavPcm16(bytes);
