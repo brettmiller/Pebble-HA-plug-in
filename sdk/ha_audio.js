@@ -488,8 +488,19 @@ function startBLESendLoop() {
       js_adpcm_valpred=0;js_adpcm_index=0;
       bleFlowGeneration=-1;bleFlowSent=0;bleFlowStartedAt=0;
       lastAnswer=text;
-      sentenceQueue=(text.match(/[^.!?]+[.!?]*/g)||[text])
-        .map(function(x){return x.trim();}).filter(function(x){return x.length>0;});
+      sentenceQueue=[];
+      // Bridge tts_prepare accepts up to 500 characters. Break up even long
+      // unpunctuated responses without losing words or audio continuity.
+      (text.match(/[^.!?]+[.!?]*/g)||[text]).forEach(function(piece){
+        piece=piece.trim();
+        while(piece.length>480){
+          var cut=piece.lastIndexOf(' ',480);
+          if(cut<200)cut=480;
+          sentenceQueue.push(piece.substring(0,cut).trim());
+          piece=piece.substring(cut).trim();
+        }
+        if(piece)sentenceQueue.push(piece);
+      });
       conversationAudioFinalPending=true;
       return new Promise(function(resolve,reject){
         Pebble.sendAppMessage({COMMAND:'AUDIO_RESET'},function(){
