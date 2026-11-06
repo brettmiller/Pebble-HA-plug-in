@@ -342,7 +342,7 @@ function pcmStats(samples) {
     duration_ms:Math.round(samples.length/8)};
 }
 function bridgeTestTone() {
-  var samples=new Int16Array(8000*2);
+  var samples=new Int16Array(8000*7);
   for(var i=0;i<samples.length;i++)
     samples[i]=Math.round(9000*Math.sin(2*Math.PI*440*i/8000));
   return samples;
