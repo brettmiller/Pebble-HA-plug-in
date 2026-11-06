@@ -1,7 +1,7 @@
 {
   "name": "pebble-home-assistant-plugin",
   "author": "Eric McCormick",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "pebble": {
     "displayName": "Home Assistant Bridge",
     "uuid": "a74370b6-929c-4ec0-b7ee-2fc6fca8db57",
@@ -199,6 +199,18 @@
               "test_tone": {
                 "type": "boolean",
                 "description": "Diagnostic only: return a bridge-generated 440 Hz PCM WAV instead of calling Home Assistant"
+              },
+              "source_rate": {
+                "type": "integer",
+                "enum": [
+                  8000,
+                  16000
+                ],
+                "description": "Optional requested PCM source sampling rate for comparing HA output; bridge always emits 8000Hz WAV"
+              },
+              "diagnostic": {
+                "type": "boolean",
+                "description": "Disable Home Assistant TTS caching for source comparison diagnostics"
               }
             },
             "required": []
