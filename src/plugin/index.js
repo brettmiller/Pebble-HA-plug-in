@@ -278,19 +278,32 @@ function wavPcm16(bytes) {
   for(var i=0;i<length;i++)samples[i]=view.getInt16(start+i*2,true);
   return {ok:true,samples:samples,rate:fmt.rate};
 }
-// Convert the actual source rate to exactly 16 kHz, before ADPCM coding.
-// Linear interpolation provides deterministic conversion without assuming a
-// provider honored the requested output format.
-function resample16k(samples,rate) {
-  if(rate===16000)return samples;
-  var count=Math.max(1,Math.round(samples.length*16000/rate));
-  var output=new Int16Array(count);
-  for(var i=0;i<count;i++) {
-    var at=i*rate/16000,a=Math.floor(at),b=Math.min(a+1,samples.length-1);
-    if(a>=samples.length)a=samples.length-1;
-    output[i]=Math.round(samples[a]+(samples[b]-samples[a])*(at-a));
+// Convert source PCM16 to the native Gemini-compatible 8 kHz playback rate.
+// If HA supplies 16 kHz, use a 31-tap windowed-sinc low-pass FIR *before*
+// dropping every other sample to avoid audible aliasing. Other supported
+// sample rates are converted with a band-limited interpolation kernel.
+function resample8k(samples,rate) {
+  if(rate===8000)return samples;
+  var outLength=Math.max(1,Math.round(samples.length*8000/rate));
+  var out=new Int16Array(outLength);
+  var cutoff=Math.min(0.45,3600/rate);
+  var radius=16;
+  for(var i=0;i<outLength;i++) {
+    var center=i*rate/8000,sum=0,weight=0;
+    var midpoint=Math.floor(center);
+    for(var j=midpoint-radius+1;j<=midpoint+radius;j++) {
+      var distance=j-center;
+      if(Math.abs(distance)>radius)continue;
+      var x=2*cutoff*distance;
+      var sinc=Math.abs(x)<1e-9?1:Math.sin(Math.PI*x)/(Math.PI*x);
+      var window=0.5+0.5*Math.cos(Math.PI*distance/radius);
+      var coefficient=2*cutoff*sinc*window;
+      var sample=samples[Math.max(0,Math.min(samples.length-1,j))];
+      sum+=sample*coefficient;weight+=coefficient;
+    }
+    out[i]=Math.max(-32768,Math.min(32767,Math.round(sum/weight)));
   }
-  return output;
+  return out;
 }
 // Standard IMA ADPCM, high nibble first, no per-chunk reset. The caller passes
 // predictor/index from the previous sentence, keeping decoder state continuous.
@@ -348,7 +361,7 @@ async function prepareTts(args){
       return failure('PLUGIN_UNAVAILABLE','TTS audio is empty or exceeds size limit');
     var parsed=wavPcm16(bytes);
     if(!parsed.ok)return failure('PLUGIN_UNAVAILABLE',parsed.error);
-    var pcm=resample16k(parsed.samples,parsed.rate);
+    var pcm=resample8k(parsed.samples,parsed.rate);
     // A full ADPCM byte represents two samples. Pad odd-length speech with
     // its final sample so consecutive sentences retain matching codec state.
     if(pcm.length&1) {
@@ -359,7 +372,7 @@ async function prepareTts(args){
     var session=storeTtsSession(compressed.bytes);
     if(!session)return failure('PLUGIN_UNAVAILABLE','Insufficient plugin storage for TTS audio');
     session.format='ima_adpcm4';
-    session.sample_rate=16000;
+    session.sample_rate=8000;
     session.channels=1;
     session.sample_count=pcm.length;
     session.next_predictor=compressed.predictor;
