@@ -27,9 +27,13 @@ jobs:
         run: node tests/test_plugin.cjs
       - name: Verify portable phone/watch audio protocol
         run: node tests/test_audio_sdk.cjs
-      - name: Verify SDK C source structure
+      - name: Compile standalone watch audio module (host syntax checks)
         run: |
+          cc -std=c11 -fsyntax-only -DPBL_SPEAKER -Isdk/tests -Isdk sdk/ha_audio.c
+          cc -std=c11 -fsyntax-only -Isdk/tests -Isdk sdk/ha_audio.c
+      - name: Verify public SDK files
+        run: |
+          test -s sdk/ha_audio.js
           test -s sdk/ha_audio.c
           test -s sdk/ha_audio.h
-          grep -q 'ha_audio_handle_message' sdk/ha_audio.c
-          grep -q 'ha_audio_handle_message' sdk/ha_audio.h
+          test -s sdk/README.md
