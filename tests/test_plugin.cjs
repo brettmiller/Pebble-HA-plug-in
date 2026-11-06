@@ -62,6 +62,8 @@ const context={Pebble,console,Date,JSON,Number,String,Object,Array,Promise,isFin
       path==='/api/tts_get_url'?{path:'/api/tts_proxy/demo.wav'}:
       {entity_id:'light.kitchen',state:'on',attributes:{}};
     if(path==='/api/tts_proxy/demo.wav'){
+      assert.strictEqual(opt.responseType,'arraybuffer',
+        'Pebble plugin fetch must request binary responseType before downloading WAV');
       const wav=new Uint8Array(44+32000);
       wav.set(Buffer.from('RIFF', 'ascii'),0);
       wav.set(Buffer.from('WAVEfmt ', 'ascii'),8);
@@ -154,6 +156,7 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert(meta.audio_diagnostics.byte_order.little_endian.rms>0);
   assert(meta.audio_diagnostics.byte_order.big_endian.rms>0);
   assert.strictEqual(meta.audio_diagnostics.source,'home_assistant');
+  assert.strictEqual(meta.audio_diagnostics.binary_transport,'fetch_arraybuffer');
   // Pebble starts a fresh plugin JS context for every action.
   vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
   let audio=[];
