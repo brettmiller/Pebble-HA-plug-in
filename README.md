@@ -32,8 +32,8 @@ Actions:
 | `get_config` | `{}` | HomeRead | Read shared STT/TTS/agent/pipeline defaults (no credentials) |
 | `read_api` | `{path}` | HomeRead | Allowlisted read-only HA API GET |
 | `conversation` | `{text, agent_id?, conversation_id?}` | HomeConverse | Call HA conversation/process |
-| `tts_prepare` | `{text, engine_id?}` | HomeConverse | Request 16kHz mono PCM16 speech from HA, low-pass and resample to 8kHz, encode as 8kHz 4-bit IMA ADPCM; optional `{predictor,index}` carry state across sentences. Returns session ID, byte count, codec metadata and `{next_predictor,next_index}` |
-| `tts_chunk` | `{session_id, offset}` | HomeConverse | Return a base64 8kHz IMA ADPCM chunk (up to 6000 compressed bytes) |
+| `tts_prepare` | `{text, engine_id?}` | HomeConverse | Request mono PCM16 WAV from HA, normalize to canonical 8kHz PCM16 WAV for consumer-side encoding; optional `{predictor,index}` carry state across sentences. Returns session ID, byte count, codec metadata and `{next_predictor,next_index}` |
+| `tts_chunk` | `{session_id, offset}` | HomeConverse | Return a base64 chunk of canonical 8kHz PCM16 WAV (up to 6000 bytes) |
 | `tts_release` | `{session_id}` | HomeConverse | Free temporary speech data |
 | `render_template` | `{template}` | HomeControl | Render a trusted HA Jinja template |
 | `call_service` | `{domain,service,data?,target?}` | HomeControl | Invoke an arbitrary HA service |
@@ -73,11 +73,11 @@ const result = await Pebble.invokeAction({
 const preferences = JSON.parse(result.text);
 ```
 
-The plugin now exposes 8 kHz, 4-bit IMA ADPCM audio through request-scoped, base64-encoded chunks. Home Assistant is asked for mono PCM16 WAV at 16 kHz; the plugin checks the actual format, low-pass filters and resamples supported mono PCM16 to 8 kHz, and compresses it before storing chunks. Audio is fetched and stored temporarily in plugin-owned localStorage in bounded base64 chunks; the consuming app handles WAV decoding and watch playback without Home Assistant credentials. This is required because Pebble starts a fresh plugin JavaScript instance for every action. Sessions expire after three minutes of inactivity and should be explicitly released. Only one in-progress session is retained, and temporary audio is not stored in the credential keystore. This has higher request overhead than a streaming API. Continuous microphone / Assist WebSocket streaming is not exposed by the current plugin API.
+The plugin exposes canonical 8 kHz mono PCM16 WAV audio through request-scoped, base64-encoded chunks. It validates the Home Assistant audio format and resamples when needed; the consuming phone app handles filtering and IMA ADPCM encoding, exactly as in Gemini.
 
 ## Watchapp compatibility
 
-Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle. The plugin-backed path uses `conversation` for one-shot dictation, without copying the token into watchapp storage, and uses `tts_prepare` / `tts_chunk` for spoken responses when enabled. The `continuous-native-conversation` consumer branch receives and forwards IMA ADPCM directly to the watch's 8 kHz decoder, without double-encoding.
+Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle. The plugin-backed path uses `conversation` for one-shot dictation, without copying the token into watchapp storage, and uses `tts_prepare` / `tts_chunk` for spoken responses when enabled. The `continuous-native-conversation` consumer branch reconstructs WAV, decodes signed PCM16, runs Gemini's 3-sample low-pass filter and IMA ADPCM encoder, and sends compressed bytes to the watch.
 
 **Limitation:** Continuous watch microphone streaming is not yet supported in plugin mode. It requires a long-running binary Assist WebSocket; current plugin actions are request-scoped and expose no streaming bridge. The watchapp blocks this feature while plugin mode is selected rather than silently using direct credentials. One-shot watch dictation and text-to-speech responses use only the plugin. Plugin-owned audio sessions rely on the plugin preview runtime retaining an active handler instance across chunk requests and require testing on a physical phone/watch.
 
@@ -87,12 +87,9 @@ GitHub Actions: `.github/workflows/build-ha-plugin.yml` packages the plugin with
 
 The Pebble plugin API is still evolving. Test updates using the current Pebble mobile app, and verify store submission requirements before publishing.
 
-## Compressed speech contract (v0.2.6)
 
-`tts_prepare` returns `{session_id,length,chunk_bytes,format:'ima_adpcm4',sample_rate:8000,channels:1,sample_count,next_predictor,next_index}`. The payload chunks are raw *headerless* IMA ADPCM (high nibble decoded first), base64 encoded; they are **not** WAV chunks. One decoded sample is represented by each nibble. A new watch response initializes predictor/index to zero, and multiple sentences preserve their predictor/index by supplying the previous response's `next_predictor` and `next_index` on the next `tts_prepare` call. Each encoded response pads an odd final PCM sample to a complete byte. The watch must select `SpeakerPcmFormat_8kHz_16bit` after decoding. The legacy direct Home Assistant mode and the plugin mode both now use 8 kHz ADPCM, matching the proven Gemini watch playback format.
+## Gemini-matched audio contract (v0.2.7)
 
-If an older consumer still expects WAV from this plugin, update that consumer before installing this release.
+This version deliberately restores the proven Gemini division of responsibilities. The plugin requests mono 8 kHz 16-bit PCM WAV (Home Assistant may choose its own supported output rate), validates the actual WAV payload, resamples to 8 kHz when necessary, then emits a canonical 44-byte WAV header and little-endian 16-bit PCM data. `tts_prepare` returns `{session_id,length,chunk_bytes,format:"pcm_s16le_wav",sample_rate:8000,channels:1,bits_per_sample:16,sample_count}`. `tts_chunk` returns base64-encoded sections of that *complete WAV file*. The phone app reconstructs the WAV, parses signed PCM16, applies Gemini's three-sample moving-average filter, encodes 4-bit IMA ADPCM high nibble first while maintaining predictor state between sentences, and sends 700-byte `AUDIO_CHUNK` messages to the watch. Pebble decodes the stream into signed 8 kHz 16-bit PCM and plays it through `SpeakerPcmFormat_8kHz_16bit`.
 
-### v0.2.6 signal chain
-
-HA TTS (request 16 kHz, mono PCM16 WAV) → validate the returned PCM header and real input rate → anti-alias low-pass resample to 8 kHz → 4-bit IMA ADPCM at 32 kbps → plugin base64 chunks → phone passes raw compressed bytes unchanged → Pebble watch IMA decoder reconstructs signed 16-bit PCM → 8 kHz speaker. This mirrors the Gemini watch playback configuration. Pair this version with a consumer that requires `sample_rate:8000`; earlier 16 kHz ADPCM consumer builds are not compatible.
+**Compatibility:** v0.2.5 and v0.2.6 produced ADPCM chunks; these are deliberately incompatible with the v0.2.7 PCM WAV client. Rebuild and install both sides. Older plug-ins cause a specific actionable bridge-version error rather than falling through to static audio.
