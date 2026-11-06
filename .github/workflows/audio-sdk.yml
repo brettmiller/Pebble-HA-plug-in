@@ -1,0 +1,35 @@
+name: Reusable Home Assistant Audio SDK
+on:
+  push:
+    paths:
+      - 'sdk/**'
+      - 'tests/test_audio_sdk.cjs'
+      - 'tests/test_plugin.cjs'
+      - 'src/plugin/index.js'
+      - '.github/workflows/audio-sdk.yml'
+  pull_request:
+    paths:
+      - 'sdk/**'
+      - 'tests/test_audio_sdk.cjs'
+      - 'tests/test_plugin.cjs'
+      - 'src/plugin/index.js'
+      - '.github/workflows/audio-sdk.yml'
+  workflow_dispatch:
+jobs:
+  audio-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify Pebble Home Assistant Bridge plugin
+        run: node tests/test_plugin.cjs
+      - name: Verify portable phone/watch audio protocol
+        run: node tests/test_audio_sdk.cjs
+      - name: Verify SDK C source structure
+        run: |
+          test -s sdk/ha_audio.c
+          test -s sdk/ha_audio.h
+          grep -q 'ha_audio_handle_message' sdk/ha_audio.c
+          grep -q 'ha_audio_handle_message' sdk/ha_audio.h
