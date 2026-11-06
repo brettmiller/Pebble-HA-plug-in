@@ -1,0 +1,72 @@
+name: Publish Home Assistant Bridge v1.0.0
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'src/**'
+      - 'sdk/**'
+      - 'tests/**'
+      - '.github/workflows/release-v1.yml'
+permissions:
+  contents: write
+concurrency:
+  group: home-assistant-bridge-v1-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate plugin and shared audio SDK
+        run: |
+          node -e "const p=require('./package.json');if(p.version!=='1.0.0'||p.pebble.projectType!=='plugin')process.exit(1)"
+          node --check src/plugin/index.js
+          node --check sdk/ha_audio.js
+          node tests/test_plugin.cjs
+          node tests/test_audio_sdk.cjs
+          cc -std=c11 -fsyntax-only -DPBL_SPEAKER -Isdk/tests -Isdk sdk/ha_audio.c
+          cc -std=c11 -fsyntax-only -Isdk/tests -Isdk sdk/ha_audio.c
+      - name: Package plugin-only PBW
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/coredevices/pebble-apps/ff7f6c5bd5c1aafce3cf8626aa143eb5599130f2/scripts/pack-plugin-pbw.py \
+            --output /tmp/pack-plugin-pbw.py
+          python3 /tmp/pack-plugin-pbw.py .
+          python3 - <<'PY'
+          import json,zipfile
+          with zipfile.ZipFile('build/pebble-home-assistant-plugin.pbw') as z:
+              info=json.loads(z.read('appinfo.json'))
+              assert info['versionLabel']=='1.0.0'
+              assert info['projectType']=='plugin' if 'projectType' in info else info['manifestVersion']==2
+              assert info['plugin']['script'] in z.namelist()
+          PY
+          cp build/pebble-home-assistant-plugin.pbw home-assistant-bridge-v1.0.0.pbw
+      - uses: actions/upload-artifact@v4
+        with:
+          name: home-assistant-bridge-v1.0.0
+          path: home-assistant-bridge-v1.0.0.pbw
+          if-no-files-found: error
+      - name: Publish stable versioned GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view v1.0.0 >/dev/null 2>&1; then
+            gh release create v1.0.0 home-assistant-bridge-v1.0.0.pbw \
+              --target "$GITHUB_SHA" \
+              --title "Home Assistant Bridge 1.0.0" \
+              --notes "First stable reusable Home Assistant Bridge plugin. Includes secure credentials, Home Assistant voice/agent actions, verified TTS WAV delivery and a copy-in SDK for Pebble native speaker playback. See sdk/README.md for developer instructions." \
+              --latest
+          else
+            gh release upload v1.0.0 home-assistant-bridge-v1.0.0.pbw --clobber
+          fi
+          echo "Stable PBW: https://github.com/$GITHUB_REPOSITORY/releases/download/v1.0.0/home-assistant-bridge-v1.0.0.pbw" >> "$GITHUB_STEP_SUMMARY"
