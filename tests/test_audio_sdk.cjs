@@ -92,6 +92,13 @@ function until(predicate,timeout=2500){
   assert(bad.errors[0].includes('chunk checksum mismatch'));
   assert(bad.packets.some(p=>p.COMMAND==='AUDIO_STOP'));
   assert.strictEqual(bad.complete,0);
+  let long=fixture(false);
+  await long.client.speak('longresponse '.repeat(90));
+  await until(()=>long.complete===1,5000);
+  const prepares=long.calls.filter(c=>c.action==='tts_prepare');
+  assert(prepares.length>=2,'Long unpunctuated speech must be split');
+  assert(prepares.every(c=>c.args.text.length<=500),
+    'Every Bridge TTS request must obey the 500-character limit');
   let restart=fixture(false);
   await restart.client.speak('Cancel now.');
   restart.client.stop();
