@@ -228,9 +228,13 @@ function cleanTtsSessions(){
 }
 function storeTtsSession(bytes){
   var keep=cleanTtsSessions();
-  // Keep a single audio session to bound storage usage on the phone.
-  keep.forEach(deleteTtsSession);
-  localStorage.setItem(TTS_INDEX_KEY,'[]');
+  // Keep up to three concurrent speech sessions: the active sentence, one
+  // prepared-ahead sentence, and a spare for overlapping release actions.
+  // An older active transfer must never be deleted by the next prepare.
+  while(keep.length>=3){
+    deleteTtsSession(keep.shift());
+  }
+  localStorage.setItem(TTS_INDEX_KEY,JSON.stringify(keep));
   var id='tts'+Date.now().toString(36)+Math.floor(Math.random()*0x100000000).toString(36);
   var key=sessionKey(id),count=Math.ceil(bytes.length/TTS_CHUNK_BYTES);
   var hashes=[];
@@ -245,7 +249,7 @@ function storeTtsSession(bytes){
       var start=i*TTS_CHUNK_BYTES;
       localStorage.setItem(key+'_'+i,base64Bytes(bytes.subarray(start,start+TTS_CHUNK_BYTES)));
     }
-    localStorage.setItem(TTS_INDEX_KEY,JSON.stringify([id]));
+    localStorage.setItem(TTS_INDEX_KEY,JSON.stringify(keep.concat([id])));
     return {session_id:id,length:bytes.length,chunk_bytes:TTS_CHUNK_BYTES};
   }catch(e){
     deleteTtsSession(id);
