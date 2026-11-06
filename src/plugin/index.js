@@ -430,11 +430,13 @@ async function prepareTts(args){
   // request, with cache disabled to prevent stale audio from masking issues.
   var sourceRate=args.source_rate===16000?16000:8000;
   var diagnostic=args.diagnostic===true;
+  var timingStart=Date.now();
   var generated=await api('/api/tts_get_url','POST',{
     engine_id:engine,message:args.text,cache:!diagnostic,
     options:{preferred_format:'wav',preferred_sample_rate:sourceRate,
       preferred_sample_channels:1,preferred_sample_bytes:2}
   });
+  var generatedAt=Date.now();
   if(!generated.ok)return generated;
   var path=generated.data&&generated.data.path;
   if(typeof path!=='string'||!/^\/api\/tts_proxy\/[a-zA-Z0-9_./%-]+$/.test(path))
@@ -458,6 +460,7 @@ async function prepareTts(args){
     stage='fetch arrayBuffer';
     var bytes=new Uint8Array(await res.arrayBuffer());
     var binaryTransport='fetch_arraybuffer';
+    var downloadedAt=Date.now();
     if(looksLikeMangledBinary(bytes))
       return failure('PLUGIN_UNAVAILABLE',
         'Plugin fetch returned an altered WAV header (0xFDFDFDFD). '+
@@ -467,11 +470,22 @@ async function prepareTts(args){
     stage='parse WAV';
     var parsed=wavPcm16(bytes);
     if(!parsed.ok)return failure('PLUGIN_UNAVAILABLE',parsed.error);
+    var parsedAt=Date.now();
     stage='resample WAV';
     var pcm=resample8k(parsed.samples,parsed.rate);
+    var resampledAt=Date.now();
     stage='store WAV session';
     var result=packageWavSession(pcm,'home_assistant');
+    var storedAt=Date.now();
     if(result.ok) {
+      result.data.audio_diagnostics.stage_ms={
+        ha_generation:generatedAt-timingStart,
+        binary_download:downloadedAt-generatedAt,
+        wav_parse:parsedAt-downloadedAt,
+        resample:resampledAt-parsedAt,
+        session_storage:storedAt-resampledAt,
+        total_bridge:storedAt-timingStart
+      };
       result.data.audio_diagnostics.engine_id=engine;
       result.data.audio_diagnostics.binary_transport=binaryTransport;
       result.data.audio_diagnostics.input_rate=parsed.rate;
