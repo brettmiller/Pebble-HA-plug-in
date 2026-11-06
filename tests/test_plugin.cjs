@@ -51,7 +51,11 @@ class MockWebSocket {
   }
 }
 const context={Pebble,console,Date,JSON,Number,String,Object,Array,Promise,isFinite,WebSocket:MockWebSocket,
-  setTimeout:()=>1,clearTimeout:()=>{},
+  // Invoke TTS retry backoffs in a microtask; leave unrelated timers inert.
+  setTimeout:(fn,delay)=>{
+    if(delay===200||delay===400)Promise.resolve().then(fn);
+    return 1;
+  },clearTimeout:()=>{},
   localStorage:{getItem:k=>local[k]||null,setItem:(k,v)=>local[k]=v,removeItem:k=>delete local[k]},
   fetch:async(url,opt)=>{
     calls.push({url,opt});
