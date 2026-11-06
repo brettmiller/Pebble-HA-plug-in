@@ -186,6 +186,31 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   new DataView(unsupported.buffer).setUint16(20,3,true);
   const parse=vm.runInNewContext('wavPcm16',context);
   assert.strictEqual(parse(unsupported).ok,false);
+  // WAV may have metadata after its finite data chunk. Do not interpret
+  // those trailing chunks as speech; doing so creates audible noise.
+  const withTrailer=Buffer.alloc(wav.length+20);
+  wav.copy(withTrailer,0);
+  withTrailer.write('LIST',wav.length,'ascii');
+  withTrailer.writeUInt32LE(12,wav.length+4);
+  withTrailer.fill(0x7f,wav.length+8);
+  const trailingParsed=parse(new Uint8Array(withTrailer));
+  assert(trailingParsed.ok);
+  assert.strictEqual(trailingParsed.samples.length,8000);
+  assert.strictEqual(trailingParsed.available_data_bytes,16020);
+  assert.strictEqual(trailingParsed.used_data_bytes,16000);
+  // Diagnostic source rate must be forwarded but output format stays Gemini.
+  const sourceTest=await callAction('tts_prepare',{
+    text:'Diagnostic phrase',source_rate:16000,diagnostic:true
+  });
+  assert(sourceTest.ok,'Uncached high-rate TTS source should work');
+  const sourceMeta=JSON.parse(sourceTest.text);
+  assert.strictEqual(sourceMeta.sample_rate,8000);
+  assert.strictEqual(sourceMeta.audio_diagnostics.requested_rate,16000);
+  const latestPost=calls.filter(c=>c.url.endsWith('/api/tts_get_url')).pop();
+  const latestBody=JSON.parse(latestPost.opt.body);
+  assert.strictEqual(latestBody.cache,false);
+  assert.strictEqual(latestBody.options.preferred_sample_rate,16000);
+  await callAction('tts_release',{session_id:sourceMeta.session_id});
   const end=await callAction('tts_release',{session_id:meta.session_id});
   assert(end.ok);
   const gone=await callAction('tts_chunk',{session_id:meta.session_id,offset:0});
