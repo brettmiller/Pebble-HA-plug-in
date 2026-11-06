@@ -120,10 +120,10 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert(speech.ok,'Plugin should prepare compressed speech without exporting credentials');
   const meta=JSON.parse(speech.text);
   assert.strictEqual(meta.format,'ima_adpcm4');
-  assert.strictEqual(meta.sample_rate,16000);
+  assert.strictEqual(meta.sample_rate,8000);
   assert.strictEqual(meta.channels,1);
-  assert.strictEqual(meta.sample_count,16000);
-  assert.strictEqual(meta.length,8000,'4-bit ADPCM must reduce PCM16 size 4x');
+  assert.strictEqual(meta.sample_count,8000);
+  assert.strictEqual(meta.length,4000,'4-bit ADPCM must reduce 8kHz PCM16 size 4x');
   assert(meta.next_index>=0&&meta.next_index<=88);
   assert(meta.next_predictor>=-32768&&meta.next_predictor<=32767);
   // Pebble starts a fresh plugin JS context for every action.
@@ -148,7 +148,7 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
     12635,13899,15289,16818,18500,20350,22385,24623,27086,29794,32767];
   const changes=[-1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8];
   let pred=0,idx=0,error=0;
-  for(let i=0;i<16000;i++){
+  for(let i=0;i<8000;i++){
     const nib=(i&1)?compressed[i>>1]&15:compressed[i>>1]>>4;
     const step=steps[idx];
     let delta=step>>3;
@@ -157,9 +157,9 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
     if(nib&1)delta+=step>>2;
     pred=Math.max(-32768,Math.min(32767,pred+((nib&8)?-delta:delta)));
     idx=Math.max(0,Math.min(88,idx+changes[nib]));
-    error+=Math.abs(pred-Math.round(11000*Math.sin(2*Math.PI*440*i/16000)));
+    error+=Math.abs(pred-Math.round(11000*Math.sin(2*Math.PI*440*i/8000)));
   }
-  assert(error/16000<1800,'Compressed speech should remain recognizable');
+  assert(error/8000<1800,'Compressed speech should remain recognizable');
   assert.strictEqual(pred,meta.next_predictor);
   assert.strictEqual(idx,meta.next_index);
   // Reject codecs not supported by the compressed-audio path.
