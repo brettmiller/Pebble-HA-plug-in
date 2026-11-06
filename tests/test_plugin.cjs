@@ -149,6 +149,10 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert.strictEqual(meta.sample_count,8000);
   assert.strictEqual(meta.length,16044);
   assert.strictEqual(meta.audio_diagnostics.input_rate,16000);
+  assert(meta.audio_diagnostics.byte_order);
+  assert(meta.audio_diagnostics.byte_order.examined_samples>0);
+  assert(meta.audio_diagnostics.byte_order.little_endian.rms>0);
+  assert(meta.audio_diagnostics.byte_order.big_endian.rms>0);
   assert.strictEqual(meta.audio_diagnostics.source,'home_assistant');
   // Pebble starts a fresh plugin JS context for every action.
   vm.runInNewContext(fs.readFileSync(path.join(root,pkg.plugin.script),'utf8'),context);
@@ -193,6 +197,14 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   withTrailer.write('LIST',wav.length,'ascii');
   withTrailer.writeUInt32LE(12,wav.length+4);
   withTrailer.fill(0x7f,wav.length+8);
+  // A nonstandard 0xFDFDFDFD length is an unknown-size streamed WAV,
+  // not 4.26 GB of audio; trust only the complete received samples.
+  const streamedFixture=Buffer.from(wav);
+  streamedFixture.writeUInt32LE(0xFDFDFDFD,40);
+  const streamedParsed=parse(new Uint8Array(streamedFixture));
+  assert(streamedParsed.ok);
+  assert.strictEqual(streamedParsed.samples.length,8000);
+  assert.strictEqual(streamedParsed.streamed_data,true);
   const trailingParsed=parse(new Uint8Array(withTrailer));
   assert(trailingParsed.ok);
   assert.strictEqual(trailingParsed.samples.length,8000);
