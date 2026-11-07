@@ -1,4 +1,4 @@
-name: Publish Home Assistant Bridge v1.0.0
+name: Publish versioned Home Assistant Bridge release
 on:
   workflow_dispatch:
   push:
@@ -12,7 +12,7 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: home-assistant-bridge-v1-release
+  group: home-assistant-bridge-versioned-release
   cancel-in-progress: false
 jobs:
   release:
@@ -25,7 +25,7 @@ jobs:
           node-version: '22'
       - name: Validate plugin and shared audio SDK
         run: |
-          node -e "const p=require('./package.json');if(p.version!=='1.0.0'||p.pebble.projectType!=='plugin')process.exit(1)"
+          node -e "const p=require('./package.json');if(!/^1\\.0\\.[0-9]+$/.test(p.version)||p.pebble.projectType!=='plugin')process.exit(1)"
           node --check src/plugin/index.js
           node --check sdk/ha_audio.js
           node tests/test_plugin.cjs
@@ -44,29 +44,33 @@ jobs:
           import json,zipfile
           with zipfile.ZipFile('build/pebble-home-assistant-plugin.pbw') as z:
               info=json.loads(z.read('appinfo.json'))
-              assert info['versionLabel']=='1.0.0'
+              assert info['versionLabel']==json.loads(open('package.json').read())['version']
               assert info['projectType']=='plugin' if 'projectType' in info else info['manifestVersion']==2
               assert info['plugin']['script'] in z.namelist()
           PY
-          cp build/pebble-home-assistant-plugin.pbw home-assistant-bridge-v1.0.0.pbw
+          VERSION=$(node -p "require('./package.json').version")
+          cp build/pebble-home-assistant-plugin.pbw "home-assistant-bridge-v${VERSION}.pbw"
       - uses: actions/upload-artifact@v4
         with:
-          name: home-assistant-bridge-v1.0.0
-          path: home-assistant-bridge-v1.0.0.pbw
+          name: home-assistant-bridge-release
+          path: home-assistant-bridge-v*.pbw
           if-no-files-found: error
-      - name: Publish stable versioned GitHub release
+      - name: Publish immutable versioned GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          if ! gh release view v1.0.0 >/dev/null 2>&1; then
-            gh release create v1.0.0 home-assistant-bridge-v1.0.0.pbw \
-              --target "$GITHUB_SHA" \
-              --title "Home Assistant Bridge 1.0.0" \
-              --notes "First stable reusable Home Assistant Bridge plugin. Includes secure credentials, Home Assistant voice/agent actions, verified TTS WAV delivery and a copy-in SDK for Pebble native speaker playback. See sdk/README.md for developer instructions." \
-              --latest
-          else
-            gh release upload v1.0.0 home-assistant-bridge-v1.0.0.pbw --clobber
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          ASSET="home-assistant-bridge-${TAG}.pbw"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Version $TAG is already published. Refusing to overwrite a stable release." >&2
+            exit 1
           fi
-          echo "Stable PBW: https://github.com/$GITHUB_REPOSITORY/releases/download/v1.0.0/home-assistant-bridge-v1.0.0.pbw" >> "$GITHUB_STEP_SUMMARY"
+          gh release create "$TAG" "$ASSET" \
+            --target "$GITHUB_SHA" \
+            --title "Home Assistant Bridge ${VERSION}" \
+            --notes "Stable Home Assistant Bridge update. Version ${VERSION} adds optional local-network HTTP access, restricted to private IPv4 or .local hosts. HTTPS stays the default. Plain HTTP transmits Home Assistant tokens and data unencrypted." \
+            --latest
+          echo "Stable PBW: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET" >> "$GITHUB_STEP_SUMMARY"
