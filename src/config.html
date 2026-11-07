@@ -5,12 +5,14 @@
 :root{color-scheme:light dark}body{font:16px system-ui,sans-serif;margin:20px;max-width:600px}
 label{display:block;margin:18px 0 6px}input{box-sizing:border-box;width:100%;padding:11px;border-radius:7px;border:1px solid #888;background:transparent;color:inherit}
 button{padding:12px 18px;margin:15px 9px 0 0;border:0;border-radius:8px;background:#1685b8;color:white}
-button.alt{background:#555}select{width:100%;padding:11px;border:1px solid #888;border-radius:7px;background:transparent;color:inherit}fieldset{margin-top:25px;border:1px solid #888;border-radius:10px;padding:14px}legend{font-weight:bold}.note{font-size:13px;opacity:.8}#status{white-space:pre-wrap;padding:14px;background:rgba(128,128,128,.15);margin-top:16px;border-radius:8px}
+button.alt{background:#555}select{width:100%;padding:11px;border:1px solid #888;border-radius:7px;background:transparent;color:inherit}fieldset{margin-top:25px;border:1px solid #888;border-radius:10px;padding:14px}legend{font-weight:bold}.toggle{display:flex;align-items:center;gap:10px;margin:14px 0}.toggle input{width:auto;flex:none}.warning{padding:10px;border:1px solid #d97706;border-radius:7px;background:rgba(217,119,6,.09)}.note{font-size:13px;opacity:.8}#status{white-space:pre-wrap;padding:14px;background:rgba(128,128,128,.15);margin-top:16px;border-radius:8px}
 </style></head><body>
 <h2>Home Assistant Bridge</h2>
 <p>Configure your Home Assistant server once. Other Pebble apps can request permission to read its entities, send conversation messages, or control services.</p>
-<label for="url">Home Assistant HTTPS URL</label>
+<label for="url">Home Assistant server URL</label>
 <input id="url" type="url" autocomplete="url" placeholder="https://your-home-assistant.example">
+<label class="toggle" for="localhttp"><input type="checkbox" id="localhttp"> Allow unsecured local HTTP</label>
+<p class="note warning" id="httpwarning" style="display:none">Only use this on a trusted private Wi-Fi/LAN. HTTP sends your Home Assistant access token and data without encryption, so anyone able to intercept the network traffic may read or change it. Remote/public HTTP addresses are blocked. Example: http://192.168.1.2:8123 or http://homeassistant.local:8123. Your phone must be connected to that LAN.</p>
 <label for="token">Long-lived access token</label>
 <input id="token" type="password" autocomplete="off" placeholder="Paste a token or leave blank to keep existing">
 <p class="note">Your token is stored privately in the Pebble phone app's secure storage. This page never reads it back.</p>
@@ -42,6 +44,11 @@ button.alt{background:#555}select{width:100%;padding:11px;border:1px solid #888;
     sel.value=current||'';
   }
   var choices=null;
+  function updateLocalMode(){
+    $('httpwarning').style.display=$('localhttp').checked?'block':'none';
+    $('url').placeholder=$('localhttp').checked?'http://192.168.1.2:8123':'https://your-home-assistant.example';
+  }
+  $('localhttp').addEventListener('change',updateLocalMode);
   async function discoverVoice(){
     $('voice_note').textContent='Looking up Home Assistant providers…';
     try{
@@ -63,13 +70,16 @@ button.alt{background:#555}select{width:100%;padding:11px;border:1px solid #888;
   async function load(){
     try {var r=await send({type:'status'});
       $('url').value=r.url||'';
+      $('localhttp').checked=r.allow_local_http===true;
+      updateLocalMode();
       status(r.configured?'Configured (token stored).':'Not configured.');
       if(r.configured)await discoverVoice();
     }catch(e){status('Could not read plugin status: '+e.message);}
   }
   $('save').onclick=async function(){
     status('Saving…');
-    try{var r=await send({type:'save',url:$('url').value,token:$('token').value});
+    try{var r=await send({type:'save',url:$('url').value,token:$('token').value,
+      allow_local_http:$('localhttp').checked});
       $('token').value='';
       status(r.ok?'Saved. You can test the connection now.':(r.error||'Save failed.'));
       if(r.ok)await discoverVoice();
@@ -91,7 +101,7 @@ button.alt{background:#555}select{width:100%;padding:11px;border:1px solid #888;
     catch(e){status('Connection failed: '+e.message);}
   };
   $('forget').onclick=async function(){
-    if(!confirm('Remove the stored Home Assistant token and URL?'))return;
+    if(!confirm('Remove the stored Home Assistant token, URL, and Local HTTP setting?'))return;
     try{await send({type:'forget'});$('token').value='';await load();}
     catch(e){status('Could not remove connection: '+e.message);}
   };
