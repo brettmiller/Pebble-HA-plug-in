@@ -14,13 +14,23 @@ The **[SDK guide](sdk/README.md)** has the exact `require()`, `#include`, messag
 
 Standalone, phone-side Pebble plugin for reusable access to a user's Home Assistant installation.
 
-## Stable 1.0.0 download
+## Stable release downloads
 
-**[Download Home Assistant Bridge v1.0.0 (.pbw)](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases/download/v1.0.0/home-assistant-bridge-v1.0.0.pbw)**
+**[Download Home Assistant Bridge v1.0.1 (.pbw)](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases/download/v1.0.1/home-assistant-bridge-v1.0.1.pbw)**
+
+Previous stable release: **[Download Home Assistant Bridge v1.0.0 (.pbw)](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases/download/v1.0.0/home-assistant-bridge-v1.0.0.pbw)**
 
 This is the stable plugin build. The [Home Assistant AI v1.0.0 watch app](https://github.com/ericlmccormick/Pebble-Home-Assistant-AI/releases/download/v1.0.0/home-assistant-ai-v1.0.0.pbw) depends on it. Install and configure the Bridge first; then install the watch app and grant plugin permissions.
 
 The [reusable audio SDK](sdk/README.md) provides portable PebbleKit JavaScript and watch C playback sources for other developers.
+
+## Local HTTP (opt-in, insecure)
+
+HTTPS remains the default and is strongly recommended. To connect to a Home Assistant server over an unencrypted **local** connection, open the plugin settings, enable **Allow unsecured local HTTP**, and enter a private LAN URL such as `http://192.168.1.2:8123` or `http://homeassistant.local:8123`. Save and use **Test connection** while the phone is on the same local network.
+
+The setting is deliberately restricted to RFC1918 private IPv4 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and `.local` mDNS hostnames. Public HTTP URLs, loopback addresses, paths, embedded credentials, and malformed ports are rejected. The plugin already requests Pebble's `LocalNetwork` permission. Voice provider discovery switches to `ws://` when this mode is enabled; HTTPS uses `wss://`.
+
+**Security warning:** Plain HTTP and WebSocket traffic are unencrypted. Home Assistant long-lived access tokens, device data, and commands may be visible or alterable to others with network access. Use only on a trusted LAN, preferably with a limited Home Assistant account, and prefer HTTPS or a trusted private VPN where possible. This is not a remote-access feature. Re-disable the toggle when returning to HTTPS.
 
 ## Install
 
