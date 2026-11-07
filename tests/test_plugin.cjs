@@ -29,7 +29,8 @@ const Pebble={secureStorage:secure,refreshSources:()=>{},
   registerActionHandler:fn=>action=fn};
 class MockWebSocket {
   constructor(url) {
-    assert.strictEqual(url,'wss://ha.example.com/api/websocket');
+    assert(url==='wss://ha.example.com/api/websocket' ||
+      url==='ws://192.168.1.2:8123/api/websocket');
     this.send=(raw)=>{
       const message=JSON.parse(raw);
       if(message.type==='auth') {
@@ -98,9 +99,48 @@ function callAction(name,args){return new Promise(resolve=>action({action:name,a
   ok:x=>resolve({ok:true,...x}),error:(code,message)=>resolve({ok:false,code,message})}));}
 function callSource(item){return new Promise(resolve=>source({item},{data:d=>resolve(d),error:(code,message)=>resolve({code,message})}));}
 (async()=>{
+  // Local HTTP is opt-in, restricted to RFC1918 LAN and mDNS .local.
+  const validBase=vm.runInNewContext('validBase',context);
+  for(const url of ['http://192.168.1.2:8123','http://10.0.0.2:8123',
+    'http://172.16.1.1:8123','http://172.31.255.254:8123',
+    'http://homeassistant.local:8123']){
+    assert.strictEqual(validBase(url,true),url);
+    assert.throws(()=>validBase(url,false));
+  }
+  for(const url of ['http://8.8.8.8:8123','http://example.com:8123',
+    'http://172.32.0.1:8123','http://192.167.1.2:8123',
+    'http://192.168.1.999:8123','http://127.0.0.1:8123',
+    'http://localhost:8123','http://192.168.001.2:8123',
+    'http://192.168.1.2:0','http://192.168.1.2:65536',
+    'http://192.168.1.2:8123/path','http://user@192.168.1.2:8123',
+    'http://homeassistant.local.evil.com:8123']){
+    assert.throws(()=>validBase(url,true),'Reject non-LAN or unsafe URL '+url);
+  }
+  let insecure=await callConfig({type:'save',url:'http://192.168.1.2:8123',
+    token:'secret',allow_local_http:false});
+  assert.strictEqual(insecure.ok,false,'HTTP must remain opt-in');
+  assert(!local.ha_bridge_url,'Rejected URL must not be persisted');
   let s=await callConfig({type:'save',url:'https://ha.example.com',token:'secret'});
   assert.strictEqual(s.ok,true);
   assert.strictEqual(stored.ha_bridge_token,'secret');
+  const initialStatus=await callConfig({type:'status'});
+  assert.strictEqual(initialStatus.allow_local_http,false);
+  let localSaved=await callConfig({type:'save',url:'http://192.168.1.2:8123',
+    token:'',allow_local_http:true});
+  assert(localSaved.ok,'Opt-in LAN HTTP saves using existing secure token');
+  assert.strictEqual((await callConfig({type:'status'})).allow_local_http,true);
+  assert.strictEqual(local.ha_bridge_url,'http://192.168.1.2:8123');
+  const discoverLocal=await callConfig({type:'voice_discover'});
+  assert(discoverLocal.ok,'Local HTTP uses ws:// instead of wss:// for discovery');
+  const unsafeSave=await callConfig({type:'save',url:'http://8.8.8.8:8123',
+    token:'',allow_local_http:true});
+  assert(!unsafeSave.ok);
+  assert.strictEqual(local.ha_bridge_url,'http://192.168.1.2:8123');
+  // Restore HTTPS before running normal API tests.
+  assert((await callConfig({type:'save',url:'https://ha.example.com',
+    token:'',allow_local_http:false})).ok);
+  assert.strictEqual((await callConfig({type:'status'})).allow_local_http,false);
+
   assert(!JSON.stringify(await callConfig({type:'status'})).includes('secret'));
   s=await callConfig({type:'test'});assert.strictEqual(s.name,'Test Home');
   let data=await callSource('entity');
@@ -324,5 +364,6 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   s=await callConfig({type:'forget'});assert(s.ok);
   assert(!stored.ha_bridge_token);
   assert(!local.ha_voice_defaults_v1,'Forget also clears voice and AI preferences');
+  assert(!local.ha_bridge_http_local_opt_in,'Forget clears the HTTP opt-in');
   console.log('Home Assistant plugin API and credential isolation checks passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});
