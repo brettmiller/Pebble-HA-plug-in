@@ -2,12 +2,45 @@
 // Credentials never leave secureStorage and never appear in source/action results.
 var URL_KEY='ha_bridge_url';
 var TOKEN_KEY='ha_bridge_token';
+var HTTP_LOCAL_KEY='ha_bridge_http_local_opt_in';
 var SOURCES=['agent/entity','agent/configured'];
-function baseUrl() { return (localStorage.getItem(URL_KEY)||'').replace(/\/+$/,''); }
-function validBase(value) {
+function localHttpEnabled(){return localStorage.getItem(HTTP_LOCAL_KEY)==='true';}
+function privateLocalHost(host){
+  // Only exact RFC1918 IPv4 or mDNS .local hostnames. Never allow public
+  // addresses or domain names that merely contain a private-IP substring.
+  if(/^[0-9.]+$/.test(host)){
+    var parts=host.split('.');
+    if(parts.length!==4)return false;
+    for(var i=0;i<parts.length;i++){
+      if(!/^(0|[1-9][0-9]{0,2})$/.test(parts[i]))return false;
+      if(Number(parts[i])>255)return false;
+    }
+    var a=Number(parts[0]),b=Number(parts[1]);
+    return a===10||(a===172&&b>=16&&b<=31)||
+      (a===192&&b===168);
+  }
+  return /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.local$/i.test(host)&&
+    host.split('.').every(function(p){return p&&p[0]!=='-'&&p[p.length-1]!=='-';});
+}
+function validBase(value,allowLocalHttp){
   var s=String(value||'').trim().replace(/\/+$/,'');
-  if(!/^https:\/\/[^\s/?#@]+(?::[0-9]{1,5})?$/i.test(s)) throw Error('Use an HTTPS server URL with no path, credentials or query.');
+  var match=/^(https?):\/\/([a-zA-Z0-9.-]+)(?::([0-9]{1,5}))?$/.exec(s);
+  if(!match)throw Error('Enter a server URL with no path, credentials, query, or fragment.');
+  var scheme=match[1],host=match[2],port=match[3];
+  if(port && (Number(port)<1||Number(port)>65535))
+    throw Error('Invalid Home Assistant port.');
+  if(scheme==='http'){
+    if(!allowLocalHttp)
+      throw Error('HTTP requires enabling Unsecured Local HTTP mode first.');
+    if(!privateLocalHost(host))
+      throw Error('Unsecured HTTP is only allowed for private LAN IPv4 addresses or .local hostnames.');
+  }
   return s;
+}
+function baseUrl(){
+  var value=localStorage.getItem(URL_KEY)||'';
+  if(!value)return '';
+  try{return validBase(value,localHttpEnabled());}catch(e){return '';}
 }
 function safeId(value) {return /^[a-z][a-z0-9_]*\.[a-z0-9_]+$/.test(String(value||''));}
 function safePart(value) {return /^[a-z][a-z0-9_]*$/.test(String(value||''));}
@@ -47,7 +80,7 @@ async function api(path,method,body) {
     return {ok:true,data:data};
   }catch(e){
     // Never log the URL or token: they may contain private hostnames.
-    return failure('PLUGIN_UNAVAILABLE','Home Assistant connection failed; check network permission and HTTPS.');
+    return failure('PLUGIN_UNAVAILABLE','Home Assistant connection failed; check network permissions and your server URL.');
   }
 }
 // Shared, token-free voice/AI preferences. Changing these does not modify
@@ -88,7 +121,7 @@ function wsList(type) {
     try{
       var url=baseUrl(),token=await Pebble.secureStorage.getItem(TOKEN_KEY);
       if(!url||!token||typeof WebSocket!=='function'){finish({ok:false,error:'WebSocket discovery unavailable'});return;}
-      socket=new WebSocket(url.replace(/^https:/,'wss:')+'/api/websocket');
+      socket=new WebSocket(url.replace(/^https:/,'wss:').replace(/^http:/,'ws:')+'/api/websocket');
       timer=setTimeout(function(){finish({ok:false,error:'Discovery timed out'});},7000);
       socket.onmessage=function(event) {
         var msg;try{msg=JSON.parse(event.data);}catch(e){return;}
@@ -639,19 +672,22 @@ Pebble.registerConfigHandler(async function(message,respond){
   switch(message&&message.type){
     case 'status':{
       var hasToken=!!(await Pebble.secureStorage.getItem(TOKEN_KEY));
-      respond({url:baseUrl(),hasToken:hasToken,configured:!!baseUrl()&&hasToken});return;
+      respond({url:baseUrl(),hasToken:hasToken,configured:!!baseUrl()&&hasToken,
+        allow_local_http:localHttpEnabled()});return;
     }
     case 'save':{
       try{
-        var url=validBase(message.url);
+        var allowHttp=message.allow_local_http===true;
+        var url=validBase(message.url,allowHttp);
         if(typeof message.token==='string'&&message.token.trim()){
           await Pebble.secureStorage.setItem(TOKEN_KEY,message.token.trim());
         } else if(!(await Pebble.secureStorage.getItem(TOKEN_KEY))){
           respond({ok:false,error:'Enter a Home Assistant token.'});return;
         }
+        localStorage.setItem(HTTP_LOCAL_KEY,allowHttp?'true':'false');
         localStorage.setItem(URL_KEY,url);
         Pebble.refreshSources(SOURCES);
-        respond({ok:true,url:url});return;
+        respond({ok:true,url:url,allow_local_http:allowHttp});return;
       }catch(e){respond({ok:false,error:e.message});return;}
     }
     case 'voice_status':
@@ -678,6 +714,7 @@ Pebble.registerConfigHandler(async function(message,respond){
     case 'forget':
       await Pebble.secureStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(URL_KEY);
+      localStorage.removeItem(HTTP_LOCAL_KEY);
       localStorage.removeItem(DEFAULTS_KEY);
       Pebble.refreshSources(SOURCES);
       respond({ok:true});return;
