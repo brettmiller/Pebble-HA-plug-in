@@ -1,4 +1,4 @@
-# Home Assistant Bridge v1.0.0 — Pebble Plugin
+# Home Assistant Bridge v1.0.1 — Pebble Plugin
 
 ## Developer audio integration
 
@@ -16,11 +16,11 @@ Standalone, phone-side Pebble plugin for reusable access to a user's Home Assist
 
 ## Stable release downloads
 
-**[Download Home Assistant Bridge v1.0.1 (.pbw)](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases/download/v1.0.1/home-assistant-bridge-v1.0.1.pbw)**
+**[Home Assistant Bridge releases](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases)** (verify the latest published asset name before installing).
 
-Previous stable release: **[Download Home Assistant Bridge v1.0.0 (.pbw)](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases/download/v1.0.0/home-assistant-bridge-v1.0.0.pbw)**
+Previous stable release: **[Previous plugin releases](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases)**.
 
-This is the stable plugin build. The [Home Assistant AI v1.0.0 watch app](https://github.com/ericlmccormick/Pebble-Home-Assistant-AI/releases/download/v1.0.0/home-assistant-ai-v1.0.0.pbw) depends on it. Install and configure the Bridge first; then install the watch app and grant plugin permissions.
+This is the stable plugin build. The [Home Assistant AI v1.0.0 watch app](https://github.com/ericlmccormick/Pebble-Home-Assistant-Bridge/releases/download/v1.0.0/home-assistant-ai-v1.0.0.pbw) depends on it. Install and configure the Bridge first; then install the watch app and grant plugin permissions.
 
 The [reusable audio SDK](sdk/README.md) provides portable PebbleKit JavaScript and watch C playback sources for other developers.
 
@@ -51,7 +51,7 @@ Plugin UUID: `a74370b6-929c-4ec0-b7ee-2fc6fca8db57`.
 Sources:
 
 - `agent/configured`: whether a URL and token are configured.
-- `agent/entity`: state, numeric/boolean readings, name, unit, domain and ID from HA states. Up to 400 entries per update; use `get_state` for an entity not in the first update.
+- `agent/entity`: state, numeric/boolean readings, name, unit, domain and ID from HA states. The source may be bounded; use `get_state` for a specific entity.
 
 Actions:
 
@@ -62,7 +62,7 @@ Actions:
 | `get_config` | `{}` | HomeRead | Read shared STT/TTS/agent/pipeline defaults (no credentials) |
 | `read_api` | `{path}` | HomeRead | Allowlisted read-only HA API GET |
 | `conversation` | `{text, agent_id?, conversation_id?}` | HomeConverse | Call HA conversation/process |
-| `tts_prepare` | `{text, engine_id?}` | HomeConverse | Request mono PCM16 WAV from HA, normalize to canonical 8kHz PCM16 WAV for consumer-side encoding; optional `{predictor,index}` carry state across sentences. Returns session ID, byte count, codec metadata and `{next_predictor,next_index}` |
+| `tts_prepare` | `{text, engine_id?}` | HomeConverse | Request mono PCM16 WAV from HA, normalize to canonical 8kHz PCM16 WAV for consumer-side encoding; optional `test_tone`, `source_rate` and `diagnostic` options. Returns a session ID and audio metadata |
 | `tts_chunk` | `{session_id, offset}` | HomeConverse | Return a base64 chunk of canonical 8kHz PCM16 WAV (up to 6000 bytes) |
 | `tts_release` | `{session_id}` | HomeConverse | Free temporary speech data |
 | `render_template` | `{template}` | HomeControl | Render a trusted HA Jinja template |
@@ -107,9 +107,9 @@ The plugin exposes canonical 8 kHz mono PCM16 WAV audio through request-scoped, 
 
 ## Watchapp compatibility
 
-Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle. The plugin-backed path uses `conversation` for one-shot dictation, without copying the token into watchapp storage, and uses `tts_prepare` / `tts_chunk` for spoken responses when enabled. The `continuous-native-conversation` consumer branch reconstructs WAV, decodes signed PCM16, runs Gemini's 3-sample low-pass filter and IMA ADPCM encoder, and sends compressed bytes to the watch.
+Home Assistant AI v1.0.0 is **Bridge-only**: it no longer exposes a direct Home Assistant connection toggle or stores the user's Home Assistant credentials in the app. The Bridge provides conversation and TTS actions, and the consuming app uses the shared audio SDK to play the response.
 
-**Limitation:** Continuous watch microphone streaming is not yet supported in plugin mode. It requires a long-running binary Assist WebSocket; current plugin actions are request-scoped and expose no streaming bridge. The watchapp blocks this feature while plugin mode is selected rather than silently using direct credentials. One-shot watch dictation and text-to-speech responses use only the plugin. Plugin-owned audio sessions rely on the plugin preview runtime retaining an active handler instance across chunk requests and require testing on a physical phone/watch.
+**Limitation:** Continuous raw watch microphone streaming is not supported by this request-scoped plugin interface. Home Assistant AI v1.0.0 uses repeated system dictation for conversation mode, and one-shot dictation and responses use only the Bridge. Test plugin-owned audio sessions on a physical phone/watch.
 
 ## Build
 
