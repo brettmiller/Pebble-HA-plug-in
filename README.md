@@ -62,7 +62,7 @@ Actions:
 | `get_config` | `{}` | HomeRead | Read shared STT/TTS/agent/pipeline defaults (no credentials) |
 | `read_api` | `{path}` | HomeRead | Allowlisted read-only HA API GET |
 | `conversation` | `{text, agent_id?, conversation_id?}` | HomeConverse | Call HA conversation/process |
-| `send_to_agent` | `{message, chat_id?}` | HomeConverse | Index 01 agent destination: send `message` to the default conversation agent. `text` is Assist's plain speech, not JSON; an Assist error returns `ASSIST_ERROR`. `chat_id` is ignored |
+| `send_to_agent` | `{message, chat_id?}` | HomeConverse | Index 01 agent destination: send `message` to the default conversation agent. `text` is Assist's plain speech, not JSON (Index stores it but doesn't display it); an Assist error returns `ASSIST_ERROR`. `chat_id` is ignored |
 | `tts_prepare` | `{text, engine_id?}` | HomeConverse | Request mono PCM16 WAV from HA, normalize to canonical 8kHz PCM16 WAV for consumer-side encoding; optional `{predictor,index}` carry state across sentences. Returns session ID, byte count, codec metadata and `{next_predictor,next_index}` |
 | `tts_chunk` | `{session_id, offset}` | HomeConverse | Return a base64 chunk of canonical 8kHz PCM16 WAV (up to 6000 bytes) |
 | `tts_release` | `{session_id}` | HomeConverse | Free temporary speech data |
@@ -114,7 +114,7 @@ The `send_to_agent` action makes the Bridge an Index 01 agent destination. What 
 2. Optionally pick a **Conversation agent** under Voice & AI defaults. `send_to_agent` uses it; otherwise Home Assistant's default agent handles the request.
 3. In the Pebble app's Index settings, open a recording gesture (for example **Double click & hold**), expand **Other agents**, and choose **Home Assistant Bridge**.
 
-The Index feed shows Assist's spoken reply. If Assist can't handle the request (unknown device, not understood), the action fails with `ASSIST_ERROR` and Assist's message. Each gesture starts a new Assist conversation. Only entities exposed to Assist are reachable.
+The Index feed shows your transcript as sent to Home Assistant Bridge; Assist's reply is not displayed there. If Assist can't handle the request (unknown device, not understood), the action fails with `ASSIST_ERROR` and Assist's message, and the feed entry is marked as failed. Each gesture starts a new Assist conversation. Only entities exposed to Assist are reachable.
 
 When sideloading a development build over an installed copy with the same version, the Pebble app keeps the previously loaded manifest until it restarts. Bump the version or force-stop the app so new actions are picked up.
 

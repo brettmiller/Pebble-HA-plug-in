@@ -668,7 +668,7 @@ Pebble.registerActionHandler(async function(request,respond) {
     default:respond.error('INVALID_REQUEST','Unknown action');return;
   }
   if(!r.ok){respond.error(r.code,r.message);return;}
-  // Index shows send_to_agent's text as the feed acknowledgement: plain Assist speech, not JSON.
+  // Index stores send_to_agent's text as the agent's reply to the transcript: plain Assist speech, not JSON.
   if(request.action==='send_to_agent'){
     var reply=r.data.text||(r.data.response_type==='error'?'Home Assistant could not handle that':'Done');
     // Assist reports "didn't understand"/"no such device" as HTTP 200 with response_type "error";
