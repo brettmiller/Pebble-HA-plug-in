@@ -12,11 +12,12 @@ assert(pkg.plugin.sources.some(source=>source.items.includes('configured')));
 assert(pkg.plugin.actions.find(a=>a.name==='call_service').callerPermissions.includes('HomeControl'));
 assert(pkg.plugin.actions.find(a=>a.name==='conversation').callerPermissions.includes('HomeConverse'));
 assert(pkg.plugin.actions.find(a=>a.name==='get_config').callerPermissions.includes('HomeRead'));
+assert(pkg.plugin.actions.find(a=>a.name==='send_to_agent').callerPermissions.includes('HomeConverse'));
 for(const name of ['tts_prepare','tts_chunk','tts_release'])
   assert(pkg.plugin.actions.find(a=>a.name===name).callerPermissions.includes('HomeConverse'));
 
 assert(pkg.plugin.sources.find(s=>s.items.includes('entity')).callerPermissions.includes('HomeRead'));
-let config,source,action,stored={},local={},calls=[];
+let config,source,action,stored={},local={},calls=[],assistReply=null;
 let transientProxyFailures=0;
 const secure={
   getItem:async k=>stored[k]||null,
@@ -64,7 +65,7 @@ const context={Pebble,console,Date,JSON,Number,String,Object,Array,Promise,isFin
     let data=path==='/api/config'?{location_name:'Test Home'}:
       path==='/api/states'?[{entity_id:'sensor.temp',state:'21.5',attributes:{friendly_name:'Temperature',unit_of_measurement:'°C'}},
         {entity_id:'light.kitchen',state:'on',attributes:{friendly_name:'Kitchen'}}]:
-      path==='/api/conversation/process'?{conversation_id:'abc',response:{speech:{plain:{speech:'Lights are on.'}}}}:
+      path==='/api/conversation/process'?assistReply||{conversation_id:'abc',response:{speech:{plain:{speech:'Lights are on.'}}}}:
       path==='/api/tts_get_url'?{path:'/api/tts_proxy/demo.wav'}:
       {entity_id:'light.kitchen',state:'on',attributes:{}};
     if(path==='/api/tts_proxy/demo.wav'){
@@ -167,6 +168,19 @@ function callSource(item){return new Promise(resolve=>source({item},{data:d=>res
   assert(r.ok);assert(JSON.parse(r.text).text==='Lights are on.');
   const lastConversation=calls.filter(c=>c.url.endsWith('/api/conversation/process')).pop();
   assert.strictEqual(JSON.parse(lastConversation.opt.body).agent_id,'conversation.google_ai');
+  // Index 01 destination: plain speech text from the default agent.
+  r=await callAction('send_to_agent',{message:'Turn on the lights',chat_id:'c1'});
+  assert(r.ok);assert.strictEqual(r.text,'Lights are on.');
+  const indexBody=JSON.parse(calls.filter(c=>c.url.endsWith('/api/conversation/process')).pop().opt.body);
+  assert.strictEqual(indexBody.text,'Turn on the lights');
+  assert.strictEqual(indexBody.agent_id,'conversation.google_ai');
+  r=await callAction('send_to_agent',{message:'  '});
+  assert.strictEqual(r.code,'INVALID_ARGS');
+  // Assist answers "no such device" with HTTP 200 and response_type error.
+  assistReply={response:{response_type:'error',speech:{plain:{speech:'No device called toaster'}}}};
+  r=await callAction('send_to_agent',{message:'Turn on the toaster'});
+  assistReply=null;
+  assert.strictEqual(r.code,'ASSIST_ERROR');assert.strictEqual(r.message,'No device called toaster');
   // A 16kHz HA WAV must be normalized to the precise 8kHz PCM16 WAV
   // that Gemini's phone-side lowPassFilter/encodeADPCM pipeline expects.
   // Bridge-origin tone uses the same persisted WAV session and chunk transport.

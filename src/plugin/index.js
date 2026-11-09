@@ -629,6 +629,11 @@ Pebble.registerActionHandler(async function(request,respond) {
         return id!==String(args.session_id||'');
       })));
       r={ok:true,data:{released:true}};break;
+    case 'send_to_agent':
+      // Index agent destination: the ring's transcript arrives as args.message.
+      // chat_id is ignored; the configured default Assist agent handles it.
+      args={text:args.message};
+      /* falls through */
     case 'conversation':
       if(typeof args.text!=='string'||!args.text.trim()||args.text.length>4000){
         respond.error('INVALID_ARGS','Message must contain 1–4000 characters');return;
@@ -663,6 +668,14 @@ Pebble.registerActionHandler(async function(request,respond) {
     default:respond.error('INVALID_REQUEST','Unknown action');return;
   }
   if(!r.ok){respond.error(r.code,r.message);return;}
+  // Index shows send_to_agent's text as the feed acknowledgement: plain Assist speech, not JSON.
+  if(request.action==='send_to_agent'){
+    var reply=r.data.text||(r.data.response_type==='error'?'Home Assistant could not handle that':'Done');
+    // Assist reports "didn't understand"/"no such device" as HTTP 200 with response_type "error";
+    // surface it as a failure so the Index feed doesn't show it as completed.
+    if(r.data.response_type==='error'){respond.error('ASSIST_ERROR',reply.slice(0,500));return;}
+    respond.ok({text:reply.slice(0,2000)});return;
+  }
   // Structured JSON replies are carried in result data; never include credentials.
   respond.ok({text:typeof r.data==='string'?r.data.slice(0,2000):
     JSON.stringify(r.data).slice(0,20000),refreshed:refresh});

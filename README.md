@@ -105,6 +105,18 @@ const preferences = JSON.parse(result.text);
 
 The plugin exposes canonical 8 kHz mono PCM16 WAV audio through request-scoped, base64-encoded chunks. It validates the Home Assistant audio format and resamples when needed; the consuming phone app handles filtering and IMA ADPCM encoding, exactly as in Gemini.
 
+## Index 01 ring
+
+The `send_to_agent` action makes the Bridge an Index 01 agent destination. What you say goes straight to Home Assistant Assist, without the Index cloud or local agent.
+
+1. Configure the Bridge (URL, token, **Test connection**). The plugin appears as a destination only while `agent/configured` reports `true`.
+2. Optionally pick a **Conversation agent** under Voice & AI defaults. `send_to_agent` uses it; otherwise Home Assistant's default agent handles the request.
+3. In the Pebble app's Index settings, open a recording gesture (for example **Double click & hold**), expand **Other agents**, and choose **Home Assistant Bridge**.
+
+The Index feed shows Assist's spoken reply. If Assist can't handle the request (unknown device, not understood), the action fails with `ASSIST_ERROR` and Assist's message. Each gesture starts a new Assist conversation. Only entities exposed to Assist are reachable.
+
+When sideloading a development build over an installed copy with the same version, the Pebble app keeps the previously loaded manifest until it restarts. Bump the version or force-stop the app so new actions are picked up.
+
 ## Watchapp compatibility
 
 Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle. The plugin-backed path uses `conversation` for one-shot dictation, without copying the token into watchapp storage, and uses `tts_prepare` / `tts_chunk` for spoken responses when enabled. The `continuous-native-conversation` consumer branch reconstructs WAV, decodes signed PCM16, runs Gemini's 3-sample low-pass filter and IMA ADPCM encoder, and sends compressed bytes to the watch.
