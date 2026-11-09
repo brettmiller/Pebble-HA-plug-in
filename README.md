@@ -116,8 +116,6 @@ The `send_to_agent` action makes the Bridge an Index 01 agent destination. What 
 
 The Index feed shows your transcript as sent to Home Assistant Bridge; Assist's reply is not displayed there. If Assist can't handle the request (unknown device, not understood), the action fails with `ASSIST_ERROR` and Assist's message, and the feed entry is marked as failed. Each gesture starts a new Assist conversation. Only entities exposed to Assist are reachable.
 
-When sideloading a development build over an installed copy with the same version, the Pebble app keeps the previously loaded manifest until it restarts. Bump the version or force-stop the app so new actions are picked up.
-
 ## Watchapp compatibility
 
 Home Assistant AI v0.2.x offers a **Use Home Assistant plugin** settings toggle. The plugin-backed path uses `conversation` for one-shot dictation, without copying the token into watchapp storage, and uses `tts_prepare` / `tts_chunk` for spoken responses when enabled. The `continuous-native-conversation` consumer branch reconstructs WAV, decodes signed PCM16, runs Gemini's 3-sample low-pass filter and IMA ADPCM encoder, and sends compressed bytes to the watch.
