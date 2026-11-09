@@ -1,6 +1,6 @@
 # Pebble Home Assistant Bridge — reusable audio SDK
 
-**SDK v1** · Works with Home Assistant Bridge plugin **v0.2.20 or newer**.
+**SDK v1** · Works with Home Assistant Bridge plugin **v1.0.1** (current stable plugin manifest).
 
 The Bridge owns **Home Assistant configuration, authentication, TTS generation, resampling, PCM WAV checksums, and temporary WAV sessions**. The consuming app owns its PebbleKit JS → Bluetooth AppMessage transport and the watch's native speaker. A plugin cannot directly include native C code into another watch app or write that app's speaker stream.
 
@@ -114,4 +114,4 @@ The library recognizes `AUDIO_RESET`, `AUDIO_CHUNK`, `AUDIO_SENTENCE_END`, and `
 
 These are reusable **source files**, not a globally installed JavaScript/C package. Pebble watch apps are independently compiled and must include their own watch speaker support. Future updates to the Bridge protocol can be distributed with a new SDK version; do not silently change packet formats without compatibility checks.
 
-The proven Home Assistant AI app is the behavior reference for this SDK. It can be migrated to the shared files separately, after hardware validation, rather than risking the user's functioning playback baseline during the initial library extraction.
+The released [Home Assistant AI v1.0.0 app](https://github.com/ericlmccormick/Pebble-Home-Assistant-Bridge) already vendors this SDK's JS and C files. Keep all three copies in sync when the transport changes; test Bluetooth pacing and real speaker playback before distributing an updated app.
