@@ -16,9 +16,9 @@ Standalone, phone-side Pebble plugin for reusable access to a user's Home Assist
 
 ## Stable release downloads
 
-**[Home Assistant Bridge releases](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases)** (verify the latest published asset name before installing).
+**[Download Home Assistant Bridge v1.0.1 (.pbw)](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases/download/v1.0.1/home-assistant-bridge-v1.0.1.pbw)**.
 
-Previous stable release: **[Previous plugin releases](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases)**.
+Previous stable release: **[Download previous v1.0.0 (.pbw)](https://github.com/ericlmccormick/Pebble-HA-plug-in/releases/download/v1.0.0/home-assistant-bridge-v1.0.0.pbw)**.
 
 This is the stable plugin build. The [Home Assistant AI v1.0.0 watch app](https://github.com/ericlmccormick/Pebble-Home-Assistant-Bridge/releases/download/v1.0.0/home-assistant-ai-v1.0.0.pbw) depends on it. Install and configure the Bridge first; then install the watch app and grant plugin permissions.
 
