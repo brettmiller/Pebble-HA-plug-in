@@ -86,6 +86,9 @@ async function api(path,method,body) {
 // Shared, token-free voice/AI preferences. Changing these does not modify
 // the user's Home Assistant server or its preferred Assist pipeline.
 var DEFAULTS_KEY='ha_voice_defaults_v1';
+// Plugin-local Index 01 option; deliberately not part of the shared get_config defaults.
+var WATCH_REPLIES_KEY='ha_index_watch_replies_v1';
+function watchRepliesEnabled(){return localStorage.getItem(WATCH_REPLIES_KEY)==='true';}
 function voiceDefaults() {
   var saved={};
   try{saved=JSON.parse(localStorage.getItem(DEFAULTS_KEY)||'{}')||{};}catch(e){}
@@ -671,6 +674,10 @@ Pebble.registerActionHandler(async function(request,respond) {
   // Index stores send_to_agent's text as the agent's reply to the transcript: plain Assist speech, not JSON.
   if(request.action==='send_to_agent'){
     var reply=r.data.text||(r.data.response_type==='error'?'Home Assistant could not handle that':'Done');
+    // Mirror Assist's reply to the watch. Needs the ShowNotifications permission; the host drops it if denied.
+    if(watchRepliesEnabled()&&typeof Pebble.showNotification==='function'){
+      try{Pebble.showNotification({layout:{type:'genericNotification',title:'Home Assistant',body:reply.slice(0,500)}});}catch(e){}
+    }
     // Assist reports "didn't understand"/"no such device" as HTTP 200 with response_type "error";
     // surface it as a failure so the Index feed doesn't show it as completed.
     if(r.data.response_type==='error'){respond.error('ASSIST_ERROR',reply.slice(0,500));return;}
@@ -686,7 +693,7 @@ Pebble.registerConfigHandler(async function(message,respond){
     case 'status':{
       var hasToken=!!(await Pebble.secureStorage.getItem(TOKEN_KEY));
       respond({url:baseUrl(),hasToken:hasToken,configured:!!baseUrl()&&hasToken,
-        allow_local_http:localHttpEnabled()});return;
+        allow_local_http:localHttpEnabled(),watch_replies:watchRepliesEnabled()});return;
     }
     case 'save':{
       try{
@@ -703,6 +710,9 @@ Pebble.registerConfigHandler(async function(message,respond){
         respond({ok:true,url:url,allow_local_http:allowHttp});return;
       }catch(e){respond({ok:false,error:e.message});return;}
     }
+    case 'index_save':
+      localStorage.setItem(WATCH_REPLIES_KEY,message.watch_replies===true?'true':'false');
+      respond({ok:true,watch_replies:watchRepliesEnabled()});return;
     case 'voice_status':
       respond({ok:true,defaults:voiceDefaults()});return;
     case 'voice_discover':
@@ -729,6 +739,7 @@ Pebble.registerConfigHandler(async function(message,respond){
       localStorage.removeItem(URL_KEY);
       localStorage.removeItem(HTTP_LOCAL_KEY);
       localStorage.removeItem(DEFAULTS_KEY);
+      localStorage.removeItem(WATCH_REPLIES_KEY);
       Pebble.refreshSources(SOURCES);
       respond({ok:true});return;
     default:respond({ok:false,error:'Unknown configuration request'});

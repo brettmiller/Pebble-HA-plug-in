@@ -116,6 +116,8 @@ The `send_to_agent` action makes the Bridge an Index 01 agent destination. What 
 
 The Index feed shows your transcript as sent to Home Assistant Bridge; Assist's reply is not displayed there. If Assist can't handle the request (unknown device, not understood), the action fails with `ASSIST_ERROR` and Assist's message, and the feed entry is marked as failed. Each gesture starts a new Assist conversation. Only entities exposed to Assist are reachable.
 
+**Watch replies (optional):** turn on **Show Home Assistant replies on the watch** in the plugin settings to mirror Assist's reply as a watch notification. This requires Pebble app 1.18.0 or later and the **Show notifications** permission, granted in the plugin's permissions. Earlier app versions ignore the option.
+
 ## Watchapp compatibility
 
 Home Assistant AI v1.0.0 is **Bridge-only**: it no longer exposes a direct Home Assistant connection toggle or stores the user's Home Assistant credentials in the app. The Bridge provides conversation and TTS actions, and the consuming app uses the shared audio SDK to play the response.
